@@ -1,0 +1,14 @@
+{
+  "name": "@obacht/template-spec",
+  "version": "0.1.0",
+  "description": "obacht.dev/v2 template manifest types and validator",
+  "main": "manifest-v2.ts",
+  "types": "manifest-v2.ts",
+  "files": ["manifest-v2.ts"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/obacht-dev/obacht-template-spec.git",
+    "directory": "ts"
+  }
+}

@@ -1,0 +1,41 @@
+apiVersion: obacht.dev/v2
+kind: Template
+
+metadata:
+  name: whoami
+  displayName: whoami (echo server)
+  description: |
+    Tiny HTTP server (traefik/whoami) that returns the request headers,
+    client IP and container hostname. Used as the smallest possible
+    sanity-check for the v2 install pipeline and for Caddy ingress
+    binding — bind a domain to it and curl the response to verify TLS,
+    routing and DNS in one shot.
+  version: "1.0.0"
+  author: obacht
+  license: MIT
+  homepage: https://github.com/traefik/whoami
+  icon: terminal
+  tags:
+    - test
+    - debug
+    - hello-world
+  trustLevel: official
+
+spec:
+  minAgentVersion: "0.1.3"
+
+  runtime:
+    type: container
+    container:
+      # Multi-arch: amd64, arm64, arm/v7 — works on every Pi we ship.
+      image: traefik/whoami:latest
+      cmd:
+        - --port=80
+      network: obacht-edge
+      labels:
+        obacht.template: whoami
+
+  services:
+    - name: web
+      targetType: container_port
+      targetPort: 80

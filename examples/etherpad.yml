@@ -1,0 +1,54 @@
+apiVersion: obacht.dev/v2
+kind: Template
+
+metadata:
+  name: etherpad
+  displayName: Etherpad (dirtyDB)
+  description: |
+    Real-time collaborative document editor. This profile uses Etherpad's
+    embedded "dirty" file-backed DB — perfect for small workshops and
+    prototypes where you don't want to run a separate Postgres/MySQL.
+
+    For larger or longer-lived deployments use the (todo) `etherpad-postgres`
+    template instead. With dirtyDB everything (pads, history, sessions)
+    lives in `/var/lib/obacht/etherpad/<instance>/data/dirty.db` on the
+    device and is preserved across reinstalls.
+  version: "1.0.0"
+  author: obacht
+  license: Apache-2.0
+  homepage: https://etherpad.org/
+  icon: edit-3
+  tags:
+    - collaboration
+    - documents
+    - workshop
+  trustLevel: official
+
+spec:
+  minAgentVersion: "0.1.3"
+
+  runtime:
+    type: container
+    container:
+      # Multi-arch tag, includes arm64.
+      image: etherpad/etherpad:2
+      env:
+        # Use the embedded dirty DB so we have zero external dependencies.
+        DB_TYPE: dirty
+        DB_FILENAME: /opt/etherpad-lite/var/dirty.db
+        # Friendly default; user can override via the configSchema once UI lands.
+        TITLE: "Obacht Pad"
+        # Etherpad listens on 9001 by default; pin it explicitly for clarity.
+        PORT: "9001"
+      volumes:
+        # Persist the dirtyDB file across container recreates.
+        - source: /var/lib/obacht/etherpad/${instance.id}/data
+          target: /opt/etherpad-lite/var
+      network: obacht-edge
+      labels:
+        obacht.template: etherpad
+
+  services:
+    - name: web
+      targetType: container_port
+      targetPort: 9001
