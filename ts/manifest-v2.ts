@@ -35,6 +35,20 @@ export interface ManifestV2Spec {
   runtime: ManifestV2Runtime;
   services?: ManifestV2Service[];
   configSchema?: ManifestV2ConfigField[];
+  /**
+   * S4.4: minimum host privilege the template needs.
+   *  - 'none' (default): runs in the agent's docker-only sandbox.
+   *  - 'power': needs the obacht-power sudoers entry; the agent
+   *    refuses to install when system_settings.power_mode != 'enabled'.
+   * Operators unlock Power Mode via `obachtctl system unlock-power`.
+   */
+  minSudoLevel?: 'none' | 'power';
+  /**
+   * S4.4: env-var keys whose values must be redacted from agent
+   * telemetry, audit logs, and propagated error messages. The agent
+   * applies redaction at the boundary of every emitted record.
+   */
+  secrets?: string[];
 }
 
 export type ManifestV2Runtime =
@@ -137,6 +151,25 @@ function validateSpec(sp: ManifestV2Spec | undefined, errors: ValidationError[])
   if (sp.configSchema !== undefined) {
     if (!Array.isArray(sp.configSchema)) errors.push({ path: 'spec.configSchema', message: 'must be an array' });
     else sp.configSchema.forEach((f, i) => validateConfigField(f, `spec.configSchema[${i}]`, errors));
+  }
+  if (sp.minSudoLevel !== undefined && sp.minSudoLevel !== 'none' && sp.minSudoLevel !== 'power') {
+    errors.push({ path: 'spec.minSudoLevel', message: "must be 'none' or 'power'" });
+  }
+  if (sp.secrets !== undefined) {
+    if (!Array.isArray(sp.secrets)) {
+      errors.push({ path: 'spec.secrets', message: 'must be an array of env keys' });
+    } else {
+      const seen = new Set<string>();
+      sp.secrets.forEach((k, i) => {
+        if (typeof k !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(k)) {
+          errors.push({ path: `spec.secrets[${i}]`, message: 'must be SHELL_ENV_KEY (uppercase + underscore)' });
+        } else if (seen.has(k)) {
+          errors.push({ path: `spec.secrets[${i}]`, message: `duplicate key '${k}'` });
+        } else {
+          seen.add(k);
+        }
+      });
+    }
   }
 }
 

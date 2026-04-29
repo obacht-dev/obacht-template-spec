@@ -38,6 +38,19 @@ type Spec struct {
 	Runtime          Runtime        `yaml:"runtime"                    json:"runtime"`
 	Services         []Service      `yaml:"services,omitempty"         json:"services,omitempty"`
 	ConfigSchema     []ConfigField  `yaml:"configSchema,omitempty"     json:"configSchema,omitempty"`
+
+	// MinSudoLevel is the minimum host privilege the template needs.
+	// "" / "none" means the template is fine inside the agent's
+	// docker-only sandbox. "power" means the template needs the
+	// obacht-power sudoers entry to be installed; agents refuse to
+	// install when system_settings.power_mode != "enabled". S4.4.
+	MinSudoLevel string `yaml:"minSudoLevel,omitempty" json:"minSudoLevel,omitempty"`
+
+	// Secrets lists env-var keys whose values must be redacted from
+	// agent telemetry, audit logs, and propagated error messages. The
+	// agent applies redaction at the boundary of every emitted record.
+	// S4.4.
+	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 }
 
 // Runtime is a discriminated union over Type. Exactly one of Container/System

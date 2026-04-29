@@ -64,6 +64,21 @@
         "configSchema": {
           "type": "array",
           "items": { "$ref": "#/definitions/configField" }
+        },
+        "minSudoLevel": {
+          "type": "string",
+          "enum": ["none", "power"],
+          "default": "none",
+          "description": "S4.4: required sudo capability on the host. 'none' (default) — template runs in the agent's docker-only sandbox. 'power' — template needs the obacht-power sudoers entry to be installed (operator must have unlocked Power Mode via obachtctl system unlock-power within the confirm-window). The agent refuses to install a 'power'-level template when system_settings.power_mode != 'enabled'."
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "uniqueItems": true,
+          "description": "S4.4: env var keys whose values must be redacted in agent telemetry, audit logs, and error messages. Matches the user-provided env at install time. Example: [\"DB_PASSWORD\", \"API_TOKEN\"]."
         }
       }
     },
