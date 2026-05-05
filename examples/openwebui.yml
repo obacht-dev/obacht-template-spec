@@ -1,0 +1,72 @@
+apiVersion: obacht.dev/v2
+kind: Template
+
+metadata:
+  name: openwebui
+  displayName: Open WebUI
+  description: |
+    Self-hosted ChatGPT-style interface for any OpenAI-compatible backend.
+    Pair with `llm-stack` (Ollama) on the same Pi to get a fully local
+    chatbot.
+
+    In v2.1 the LLM endpoint is a manual text input. Phase 2 will turn it
+    into a picker over installed `openai_compatible` providers.
+  version: "1.0.0"
+  author: obacht
+  license: MIT
+  homepage: https://github.com/open-webui/open-webui
+  icon: message-square
+  tags:
+    - ai
+    - chat
+    - openwebui
+  trustLevel: official
+
+spec:
+  minSpecVersion: "v2.1"
+  minAgentVersion: "0.3.0"
+
+  compatibility:
+    architectures: [linux/arm64, linux/amd64]
+    resources:
+      minRamMb: 512
+      minDiskMb: 1024
+
+  runtime:
+    type: container
+    container:
+      image: ghcr.io/open-webui/open-webui:main
+      env:
+        OLLAMA_BASE_URL: "${cfg.llm_endpoint}"
+        WEBUI_AUTH: "true"
+      volumes:
+        - source: /var/lib/obacht/openwebui/${instance.id}/data
+          target: /app/backend/data
+      network: obacht-edge
+      labels:
+        obacht.template: openwebui
+
+  services:
+    - name: web
+      targetType: container_port
+      targetPort: 8080
+
+  configSchema:
+    - key: llm_endpoint
+      label: LLM backend
+      type: service_reference
+      interface: openai_compatible
+      interfaceVersion: v1
+      fallback:
+        type: text
+        placeholder: "http://localhost:11434"
+        default: ""
+      description: |
+        URL of an OpenAI-compatible LLM endpoint. Auto-discovery of installed
+        providers arrives in a future obacht release; for now, type the URL
+        of your llm-stack instance manually.
+
+  consumes:
+    - interface: openai_compatible
+      version: v1
+      configKey: llm_endpoint

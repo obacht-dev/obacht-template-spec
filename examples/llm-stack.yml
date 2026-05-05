@@ -1,0 +1,76 @@
+apiVersion: obacht.dev/v2
+kind: Template
+
+metadata:
+  name: llm-stack
+  displayName: LLM Stack (Ollama)
+  description: |
+    Local Ollama server providing an OpenAI-compatible LLM endpoint to other
+    obacht templates on the same Pi (e.g. open-webui, hoarder).
+
+    In v2.1 this template advertises the `openai_compatible` interface but
+    consumers must still type the URL in manually. Phase 2 will turn that
+    into an automatic picker.
+  version: "1.0.0"
+  author: obacht
+  license: MIT
+  homepage: https://ollama.com/
+  icon: cpu
+  tags:
+    - ai
+    - llm
+    - ollama
+    - infrastructure
+  trustLevel: official
+
+spec:
+  minSpecVersion: "v2.1"
+  minAgentVersion: "0.3.0"
+
+  compatibility:
+    devices: [raspberry-pi-5]
+    architectures: [linux/arm64, linux/amd64]
+    resources:
+      minRamMb: 4096
+      minDiskMb: 8192
+
+  runtime:
+    type: compose
+    compose:
+      primaryService: ollama
+      primaryPort: 11434
+      dataPath: /var/lib/obacht/llm-stack/${instance.id}
+      imageDigests: {}
+      body: |
+        services:
+          ollama:
+            image: ollama/ollama:latest
+            environment:
+              OLLAMA_HOST: "0.0.0.0:11434"
+            volumes:
+              - models:/root/.ollama
+            restart: unless-stopped
+            security_opt:
+              - "no-new-privileges:true"
+            healthcheck:
+              test: ["CMD", "ollama", "list"]
+              interval: 30s
+              timeout: 10s
+              retries: 5
+        volumes:
+          models:
+            x-obacht-data: true
+
+  services:
+    - name: api
+      targetType: container_port
+      targetService: ollama
+      targetPort: 11434
+
+  provides:
+    - interface: openai_compatible
+      version: v1
+      service: ollama
+      port: 11434
+      path: /v1
+      auth: none

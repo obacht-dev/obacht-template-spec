@@ -22,7 +22,14 @@ metadata:
   trustLevel: official
 
 spec:
-  minAgentVersion: "0.1.3"
+  minSpecVersion: "v2.1"
+  minAgentVersion: "0.3.0"
+
+  compatibility:
+    architectures: [linux/arm64, linux/amd64, linux/arm/v7]
+    resources:
+      minRamMb: 32
+      minDiskMb: 64
 
   runtime:
     type: container
