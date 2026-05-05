@@ -1,0 +1,112 @@
+apiVersion: obacht.dev/v2
+kind: Template
+
+metadata:
+  name: wordpress-mysql
+  displayName: WordPress (MySQL bundle)
+  description: |
+    Full WordPress install with a dedicated MySQL 8 database, isolated in its
+    own bundle. The agent generates the DB root + user passwords on first
+    install and stores them in /var/lib/obacht/agent/secrets.db — they never
+    leave the Pi.
+
+    Each instance is a fully self-contained bundle: its own Docker network,
+    its own data volumes, its own secrets. Two `wordpress-mysql` instances on
+    the same Pi never see each other.
+  version: "1.0.0"
+  author: obacht
+  license: GPL-2.0-or-later
+  homepage: https://wordpress.org/
+  icon: wordpress
+  tags:
+    - cms
+    - blog
+    - wordpress
+    - bundle
+  trustLevel: official
+
+spec:
+  minSpecVersion: "v2.1"
+  minAgentVersion: "0.3.0"
+
+  compatibility:
+    devices: [raspberry-pi-4, raspberry-pi-5]
+    architectures: [linux/arm64, linux/amd64]
+    resources:
+      minRamMb: 768
+      minDiskMb: 2048
+
+  runtime:
+    type: compose
+    compose:
+      primaryService: web
+      primaryPort: 80
+      dataPath: /var/lib/obacht/wordpress-mysql/${instance.id}
+      # imageDigests is populated by the registry publish pipeline.
+      imageDigests: {}
+      body: |
+        services:
+          web:
+            image: wordpress:6-php8.3-apache
+            depends_on:
+              db:
+                condition: service_healthy
+            environment:
+              WORDPRESS_DB_HOST: db
+              WORDPRESS_DB_USER: wordpress
+              WORDPRESS_DB_PASSWORD: "${secret.db_user_password}"
+              WORDPRESS_DB_NAME: wordpress
+              WORDPRESS_TABLE_PREFIX: "wp_"
+              WORDPRESS_DEBUG: "0"
+            volumes:
+              - content:/var/www/html
+            restart: unless-stopped
+            security_opt:
+              - "no-new-privileges:true"
+          db:
+            image: mysql:8.0
+            environment:
+              MYSQL_ROOT_PASSWORD: "${secret.db_root_password}"
+              MYSQL_DATABASE: wordpress
+              MYSQL_USER: wordpress
+              MYSQL_PASSWORD: "${secret.db_user_password}"
+            volumes:
+              - mysql:/var/lib/mysql
+            healthcheck:
+              test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p$$MYSQL_ROOT_PASSWORD"]
+              interval: 10s
+              timeout: 5s
+              retries: 10
+            restart: unless-stopped
+            security_opt:
+              - "no-new-privileges:true"
+        volumes:
+          content:
+            x-obacht-data: true
+          mysql:
+            x-obacht-data: true
+
+  services:
+    - name: web
+      targetType: container_port
+      targetService: web
+      targetPort: 80
+
+  configSchema:
+    - key: site_title
+      label: Site title
+      type: text
+      default: "My WordPress site"
+
+  secretsSchema:
+    - key: db_root_password
+      length: 32
+      charset: alphanumeric
+    - key: db_user_password
+      length: 32
+      charset: alphanumeric
+
+  secrets:
+    - WORDPRESS_DB_PASSWORD
+    - MYSQL_ROOT_PASSWORD
+    - MYSQL_PASSWORD
