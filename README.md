@@ -20,9 +20,11 @@ share the exact same definition:
 
 ## Status
 
-`obacht.dev/v2` is **stable** as of 2026-04. Breaking changes will require
-a new `apiVersion` (e.g. `obacht.dev/v3`); v2 manifests must continue to
-parse correctly indefinitely.
+`obacht.dev/v2` is **stable** as of 2026-04. Current minor: **v2.1.0**
+(2026-05) — adds compose-runtime bundles, compatibility hints, and the
+`service_reference` config field type. v2.1 manifests are accepted by
+agents on **v0.3.x** and newer; older agents reject them with a clear
+"unsupported runtime/feature" error.
 
 ## Quick reference
 
@@ -74,6 +76,54 @@ Substitution applies to `cmd`, `env` values, `volumes.source`, `volumes.target`,
 - per-template install/uninstall shell scripts
 - per-template DNS / cert handling (lives at device level via Caddy)
 - per-template UI tabs that mutate device state directly
+
+### v2.1 — compose runtime + compatibility
+
+For multi-container "bundles" (e.g. a CMS + its database), set
+`spec.runtime.type: compose` and provide:
+
+```yaml
+spec:
+  runtime:
+    type: compose
+    compose:
+      primaryService: web        # which service Caddy routes to
+      primaryPort: 8080
+      imageDigests:              # registry pins these at publish time
+        ghost: sha256:a0506f3f05...
+        mysql: sha256:7dcddc01f1...
+      body: |
+        services:
+          web:
+            image: ghost:5-alpine
+            environment:
+              database__client: mysql
+              database__connection__host: db
+          db:
+            image: mysql:8.0
+            environment:
+              MYSQL_ROOT_PASSWORD: ${secret.db_root}
+```
+
+Each instance lands in its own compose project (`obacht-<instanceID>`)
+with a private bundle network; only the `primaryService` is joined to
+the shared `obacht-edge` so Caddy can reach it.
+
+`spec.compatibility` lets a manifest declare what it needs from the
+host so the install wizard can refuse incompatible devices up-front:
+
+```yaml
+compatibility:
+  devices: ["raspberry-pi-4", "raspberry-pi-5"]
+  architectures: ["linux/arm64"]
+  resources:
+    minRamMb: 1024
+    minDiskMb: 2048
+```
+
+`configSchema[].type` gains `service_reference` — a free-text URL field
+hinting that the value should point at another service (e.g. the URL
+of an OpenWebUI bundle's Ollama backend).
 
 ## Layout
 
