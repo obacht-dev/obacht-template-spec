@@ -258,7 +258,7 @@
       "properties": {
         "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
         "length": { "type": "integer", "minimum": 8, "maximum": 256 },
-        "charset": { "type": "string", "enum": ["alphanumeric", "alphanumeric_symbols", "hex", "base64"], "default": "alphanumeric" }
+        "charset": { "type": "string", "enum": ["alphanumeric", "alphanumeric_symbols", "hex", "base64", "base64_bytes"], "default": "alphanumeric" }
       }
     },
     "provideEntry": {

@@ -132,7 +132,7 @@ export interface ManifestV2ConfigField {
 export interface ManifestV2SecretField {
   key: string;
   length: number;
-  charset?: 'alphanumeric' | 'alphanumeric_symbols' | 'hex' | 'base64';
+  charset?: 'alphanumeric' | 'alphanumeric_symbols' | 'hex' | 'base64' | 'base64_bytes';
 }
 
 export interface ManifestV2ProvideEntry {
@@ -263,7 +263,7 @@ function validateSpec(sp: ManifestV2Spec | undefined, errors: ValidationError[])
         if (typeof f.length !== 'number' || f.length < 8 || f.length > 256) {
           errors.push({ path: `${path}.length`, message: 'must be 8..256' });
         }
-        if (f.charset && !['alphanumeric', 'alphanumeric_symbols', 'hex', 'base64'].includes(f.charset)) {
+        if (f.charset && !['alphanumeric', 'alphanumeric_symbols', 'hex', 'base64', 'base64_bytes'].includes(f.charset)) {
           errors.push({ path: `${path}.charset`, message: 'invalid' });
         }
       });
