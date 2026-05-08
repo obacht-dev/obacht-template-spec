@@ -11,7 +11,7 @@
  */
 
 export const MANIFEST_V2_API_VERSION = 'obacht.dev/v2' as const;
-export const SUPPORTED_SPEC_VERSION = 'v2.1' as const;
+export const SUPPORTED_SPEC_VERSION = 'v2.2' as const;
 
 export interface ManifestV2 {
   apiVersion: typeof MANIFEST_V2_API_VERSION;
@@ -127,12 +127,29 @@ export interface ManifestV2ConfigField {
   interface?: string;
   interfaceVersion?: string;
   fallback?: { type: 'text' | 'secret'; placeholder?: string; default?: string };
+  /**
+   * Spec v2.2: when true, the value is set at install time and cannot be
+   * changed afterwards. The webapp disables the field in the post-install
+   * Configure dialog and the api rejects install-plan submissions that try
+   * to mutate it. Use for values the underlying app only honours during
+   * first-boot bootstrap (e.g. Filament/Laravel admin seeding, GHOST_URL,
+   * *_INIT_* env vars).
+   */
+  immutable?: boolean;
 }
 
 export interface ManifestV2SecretField {
   key: string;
   length: number;
   charset?: 'alphanumeric' | 'alphanumeric_symbols' | 'hex' | 'base64' | 'base64_bytes';
+  /**
+   * Spec v2.2: secrets are immutable by default once generated (rotating
+   * an APP_KEY would invalidate Laravel session/DB encryption, etc.).
+   * The flag is accepted for explicitness and future symmetry with
+   * configField; setting it to false is currently not honoured by the
+   * agent (no rotation path implemented).
+   */
+  immutable?: boolean;
 }
 
 export interface ManifestV2ProvideEntry {

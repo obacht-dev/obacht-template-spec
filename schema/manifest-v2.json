@@ -244,7 +244,8 @@
             "placeholder": { "type": "string" },
             "default": { "type": "string" }
           }
-        }
+        },
+        "immutable": { "type": "boolean", "default": false, "description": "Spec v2.2: when true, the value is set at install time and cannot be changed via the post-install Configure UI. The api rejects install-plan submissions that try to mutate it." }
       },
       "allOf": [
         { "if": { "properties": { "type": { "const": "select" } } }, "then": { "required": ["options"] } },
@@ -258,7 +259,8 @@
       "properties": {
         "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
         "length": { "type": "integer", "minimum": 8, "maximum": 256 },
-        "charset": { "type": "string", "enum": ["alphanumeric", "alphanumeric_symbols", "hex", "base64", "base64_bytes"], "default": "alphanumeric" }
+        "charset": { "type": "string", "enum": ["alphanumeric", "alphanumeric_symbols", "hex", "base64", "base64_bytes"], "default": "alphanumeric" },
+        "immutable": { "type": "boolean", "default": true, "description": "Spec v2.2: secrets are immutable by default once generated. Accepted for explicitness; setting false is currently not honoured by the agent (no rotation path)." }
       }
     },
     "provideEntry": {
