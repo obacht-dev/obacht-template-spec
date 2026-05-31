@@ -84,12 +84,25 @@ export interface ManifestV2Container {
 
 export interface ManifestV2Compose {
   primaryService: string;
-  primaryPort: number;
+  /** Number, or a ${cfg.X} placeholder for custom-docker-composition. */
+  primaryPort: number | string;
   dataPath?: string;
   /** Map from image reference (as in body) to sha256 digest. Populated by registry publish. */
   imageDigests?: Record<string, string>;
   /** YAML compose document (string). Validated against allowlist by registry. */
   body: string;
+  /**
+   * Spec v2.3: allow image references without a pinned digest. Only used by
+   * custom-docker-composition, where the user supplies the compose body at
+   * install time so digests cannot be pinned at publish. The agent enforces
+   * the compose allowlist as defence-in-depth for these bodies.
+   */
+  allowUnpinnedImages?: boolean;
+  /**
+   * Spec v2.3: config key whose value is written verbatim as the project
+   * .env file (KEY=value lines) for ${VAR} interpolation in the body.
+   */
+  envConfigKey?: string;
 }
 
 export interface ManifestV2System {
@@ -109,6 +122,7 @@ export interface ManifestV2Service {
 
 export type ManifestV2ConfigType =
   | 'text'
+  | 'textarea'
   | 'number'
   | 'select'
   | 'boolean'
@@ -202,6 +216,8 @@ const ENV_KEY_RE = /^[A-Z][A-Z0-9_]*$/;
 const SECRET_KEY_RE = /^[a-z][a-z0-9_]*$/;
 const CFG_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
+// A bare ${cfg.X} placeholder (custom-docker-composition structural fields).
+const CFG_REF_RE = /^\$\{cfg\.[a-zA-Z0-9_]+\}$/;
 
 const VALID_DEVICES: DeviceModel[] = [
   'raspberry-pi-4',
@@ -369,8 +385,12 @@ function validateRuntime(rt: any, errors: ValidationError[]): void {
       return;
     }
     if (!rt.compose.primaryService) errors.push({ path: 'spec.runtime.compose.primaryService', message: 'is required' });
-    if (typeof rt.compose.primaryPort !== 'number' || rt.compose.primaryPort < 1 || rt.compose.primaryPort > 65535) {
-      errors.push({ path: 'spec.runtime.compose.primaryPort', message: 'must be 1..65535' });
+    // primaryPort is normally a number; custom-docker-composition drives it
+    // from a ${cfg.X} placeholder string resolved on the device at install.
+    const pp = rt.compose.primaryPort;
+    const ppIsCfgPlaceholder = typeof pp === 'string' && /^\$\{cfg\.[a-zA-Z0-9_]+\}$/.test(pp);
+    if (!ppIsCfgPlaceholder && (typeof pp !== 'number' || pp < 1 || pp > 65535)) {
+      errors.push({ path: 'spec.runtime.compose.primaryPort', message: 'must be 1..65535 or a ${cfg.X} placeholder' });
     }
     if (typeof rt.compose.body !== 'string' || rt.compose.body.trim().length === 0) {
       errors.push({ path: 'spec.runtime.compose.body', message: 'is required (YAML compose document as string)' });
@@ -408,7 +428,8 @@ function validateService(svc: any, path: string, errors: ValidationError[], runt
   if (!validTargets.includes(svc.targetType)) {
     errors.push({ path: `${path}.targetType`, message: `must be one of ${validTargets.join(', ')}` });
   }
-  if ((svc.targetType === 'container_port' || svc.targetType === 'host_port') && typeof svc.targetPort !== 'number') {
+  if ((svc.targetType === 'container_port' || svc.targetType === 'host_port') &&
+      !(typeof svc.targetPort === 'number' || (typeof svc.targetPort === 'string' && CFG_REF_RE.test(svc.targetPort)))) {
     errors.push({ path: `${path}.targetPort`, message: 'is required for *_port targets' });
   }
   if (svc.targetType === 'unix_socket' && !svc.targetPath) {
@@ -426,7 +447,7 @@ function validateConfigField(f: any, path: string, errors: ValidationError[]): v
   }
   if (!f.key || !CFG_KEY_RE.test(f.key)) errors.push({ path: `${path}.key`, message: 'is required (alphanumeric + underscore, must start with letter/underscore)' });
   if (!f.label) errors.push({ path: `${path}.label`, message: 'is required' });
-  const validTypes = ['text', 'number', 'select', 'boolean', 'secret', 'service_reference'];
+  const validTypes = ['text', 'textarea', 'number', 'select', 'boolean', 'secret', 'service_reference'];
   if (!validTypes.includes(f.type)) {
     errors.push({ path: `${path}.type`, message: `must be one of ${validTypes.join(', ')}` });
   }

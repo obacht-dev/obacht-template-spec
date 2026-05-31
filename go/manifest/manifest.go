@@ -115,6 +115,11 @@ type Compose struct {
 	DataPath       string            `yaml:"dataPath,omitempty"       json:"dataPath,omitempty"`
 	ImageDigests   map[string]string `yaml:"imageDigests,omitempty"   json:"imageDigests,omitempty"`
 	Body           string            `yaml:"body"                     json:"body"`
+	// AllowUnpinnedImages relaxes digest pinning for user-supplied compose
+	// bodies (custom-docker-composition). EnvConfigKey names the config key
+	// whose value is written as the project .env file.
+	AllowUnpinnedImages bool   `yaml:"allowUnpinnedImages,omitempty" json:"allowUnpinnedImages,omitempty"`
+	EnvConfigKey        string `yaml:"envConfigKey,omitempty"        json:"envConfigKey,omitempty"`
 }
 
 // PortMap is a TCP host→container port pair. Host=0 means assign at install time.

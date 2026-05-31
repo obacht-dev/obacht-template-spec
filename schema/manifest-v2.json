@@ -167,12 +167,19 @@
       "additionalProperties": false,
       "properties": {
         "primaryService": { "type": "string", "minLength": 1 },
-        "primaryPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "primaryPort": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 65535 },
+            { "type": "string", "pattern": "^\\$\\{cfg\\.[a-zA-Z0-9_]+\\}$" }
+          ]
+        },
         "dataPath": { "type": "string" },
         "imageDigests": {
           "type": "object",
           "additionalProperties": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
         },
+        "allowUnpinnedImages": { "type": "boolean" },
+        "envConfigKey": { "type": "string" },
         "body": { "type": "string", "minLength": 1 }
       }
     },
@@ -206,7 +213,12 @@
         "name": { "type": "string", "minLength": 1 },
         "targetType": { "type": "string", "enum": ["container_port", "host_port", "unix_socket"] },
         "targetService": { "type": "string", "minLength": 1 },
-        "targetPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "targetPort": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 65535 },
+            { "type": "string", "pattern": "^\\$\\{cfg\\.[a-zA-Z0-9_]+\\}$" }
+          ]
+        },
         "targetPath": { "type": "string" }
       },
       "allOf": [
@@ -221,7 +233,7 @@
       "properties": {
         "key": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
         "label": { "type": "string", "minLength": 1 },
-        "type": { "type": "string", "enum": ["text", "number", "select", "boolean", "secret", "service_reference"] },
+        "type": { "type": "string", "enum": ["text", "textarea", "number", "select", "boolean", "secret", "service_reference"] },
         "required": { "type": "boolean" },
         "default": {},
         "description": { "type": "string" },
