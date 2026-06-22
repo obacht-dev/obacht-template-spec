@@ -1,6 +1,6 @@
 {
   "name": "@obacht/template-spec",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "obacht.dev/v2 (spec rev v2.1) template manifest types and validators",
   "main": "manifest-v2.ts",
   "types": "manifest-v2.ts",

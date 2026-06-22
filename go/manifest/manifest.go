@@ -1,5 +1,5 @@
 // Package manifest defines Go types for the obacht.dev/v2 template manifest,
-// spec revision v2.1.
+// spec revision v2.5.
 //
 // The schema is owned by https://github.com/obacht-dev/obacht-template-spec —
 // keep these types in sync with schema/manifest-v2.json and ts/manifest-v2.ts.
@@ -9,8 +9,12 @@
 package manifest
 
 const (
-	APIVersionV2         = "obacht.dev/v2"
-	SupportedSpecVersion = "v2.1"
+	APIVersionV2 = "obacht.dev/v2"
+	// SupportedSpecVersion is the highest additive spec revision modelled here:
+	// v2.2 immutable config/secret fields; v2.3 tag-only compose images +
+	// envConfigKey; v2.4 macOS platform (mac device, darwin/arm64, excludeDevices,
+	// system host_service); v2.5 spec.gettingStarted.
+	SupportedSpecVersion = "v2.5"
 )
 
 // Manifest is the top-level v2 template manifest.
@@ -58,15 +62,22 @@ type Spec struct {
 	// Secrets lists env-var keys whose values must be redacted from
 	// telemetry, audit logs, and propagated error messages.
 	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+
+	// GettingStarted (v2.5) is an optional post-install note shown to the user
+	// (e.g. "open the app and register your account"). Informational only.
+	GettingStarted string `yaml:"gettingStarted,omitempty" json:"gettingStarted,omitempty"`
 }
 
 // Compatibility is the pre-flight contract validated by the agent before
 // any image is pulled.
 type Compatibility struct {
-	Devices       []string         `yaml:"devices,omitempty"       json:"devices,omitempty"`
-	Architectures []string         `yaml:"architectures"           json:"architectures"`
-	OS            []OSRequirement  `yaml:"os,omitempty"            json:"os,omitempty"`
-	Resources     *ResourceBudget  `yaml:"resources,omitempty"     json:"resources,omitempty"`
+	Devices []string `yaml:"devices,omitempty" json:"devices,omitempty"`
+	// ExcludeDevices (v2.4) names device classes the template must NOT be
+	// offered on even if the architecture matches (clients filter on this).
+	ExcludeDevices []string        `yaml:"excludeDevices,omitempty" json:"excludeDevices,omitempty"`
+	Architectures  []string        `yaml:"architectures"            json:"architectures"`
+	OS             []OSRequirement `yaml:"os,omitempty"            json:"os,omitempty"`
+	Resources      *ResourceBudget `yaml:"resources,omitempty"     json:"resources,omitempty"`
 }
 
 // OSRequirement describes one acceptable host OS family.
@@ -135,11 +146,29 @@ type VolumeMount struct {
 	ReadOnly bool   `yaml:"readOnly,omitempty" json:"readOnly,omitempty"`
 }
 
-// System describes a systemd-managed workload.
+// System describes a host-managed workload. Exactly one flavor is present:
+// the systemd unit (UnitName + UnitTemplate, Raspberry Pi) or, since v2.4, the
+// macOS HostService (launchd-managed host binary).
 type System struct {
-	UnitName     string       `yaml:"unitName"        json:"unitName"`
-	UnitTemplate string       `yaml:"unitTemplate"    json:"unitTemplate"`
-	Files        []SystemFile `yaml:"files,omitempty" json:"files,omitempty"`
+	UnitName     string       `yaml:"unitName,omitempty"     json:"unitName,omitempty"`
+	UnitTemplate string       `yaml:"unitTemplate,omitempty" json:"unitTemplate,omitempty"`
+	Files        []SystemFile `yaml:"files,omitempty"        json:"files,omitempty"`
+	// HostService (v2.4) is the macOS launchd flavor: a structured host binary
+	// (binary + argv + env) instead of a systemd unit. The agent verifies
+	// BinaryDigest before extract/exec.
+	HostService *HostService `yaml:"host_service,omitempty" json:"host_service,omitempty"`
+}
+
+// HostService is the v2.4 macOS host-service flavor of the system runtime.
+type HostService struct {
+	Kind         string            `yaml:"kind,omitempty"      json:"kind,omitempty"`
+	Binary       string            `yaml:"binary"              json:"binary"`
+	BinaryURL    string            `yaml:"binary_url"          json:"binary_url"`
+	BinaryDigest string            `yaml:"binary_digest"       json:"binary_digest"`
+	Archive      string            `yaml:"archive,omitempty"   json:"archive,omitempty"`
+	Args         []string          `yaml:"args,omitempty"      json:"args,omitempty"`
+	Env          map[string]string `yaml:"env,omitempty"       json:"env,omitempty"`
+	DataDir      string            `yaml:"data_dir,omitempty"  json:"data_dir,omitempty"`
 }
 
 // SystemFile is a sidecar file written to disk before the unit starts.
@@ -172,9 +201,13 @@ type ConfigField struct {
 	Options     []ConfigOption `yaml:"options,omitempty"     json:"options,omitempty"`
 
 	// For type=service_reference (declared but not resolved in v2.1).
-	Interface        string             `yaml:"interface,omitempty"        json:"interface,omitempty"`
-	InterfaceVersion string             `yaml:"interfaceVersion,omitempty" json:"interfaceVersion,omitempty"`
-	Fallback         *ConfigFallback    `yaml:"fallback,omitempty"         json:"fallback,omitempty"`
+	Interface        string          `yaml:"interface,omitempty"        json:"interface,omitempty"`
+	InterfaceVersion string          `yaml:"interfaceVersion,omitempty" json:"interfaceVersion,omitempty"`
+	Fallback         *ConfigFallback `yaml:"fallback,omitempty"         json:"fallback,omitempty"`
+
+	// Immutable (v2.2): value is set at install time and cannot be changed
+	// afterwards (first-boot bootstrap values).
+	Immutable bool `yaml:"immutable,omitempty" json:"immutable,omitempty"`
 }
 
 // ConfigOption is one entry of a select-type ConfigField.
@@ -196,6 +229,9 @@ type SecretField struct {
 	Key     string `yaml:"key"               json:"key"`
 	Length  int    `yaml:"length"            json:"length"`
 	Charset string `yaml:"charset,omitempty" json:"charset,omitempty"`
+	// Immutable (v2.2): secrets are immutable by default once generated; the
+	// flag is accepted for explicit declaration.
+	Immutable bool `yaml:"immutable,omitempty" json:"immutable,omitempty"`
 }
 
 // ProvideEntry declares one service interface the template advertises.

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.obacht.dev/manifest-v2.json",
   "title": "Obacht Template Manifest v2",
-  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets. v2.1 is BREAKING relative to v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility.",
+  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets (BREAKING vs v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility). Additive since: v2.2 immutable config/secret fields; v2.3 tag-only compose images + envConfigKey + ${cfg.X} structural placeholders; v2.4 macOS platform (the 'mac' device, 'darwin/arm64' architecture, compatibility.excludeDevices, and the system runtime's host_service flavor); v2.5 the optional spec.gettingStarted post-install note.",
   "type": "object",
   "required": ["apiVersion", "kind", "metadata", "spec"],
   "additionalProperties": false,
@@ -66,13 +66,21 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["raspberry-pi-4", "raspberry-pi-5", "mac-mini-arm", "generic-x86_64", "generic-arm64"]
+            "enum": ["raspberry-pi-4", "raspberry-pi-5", "mac-mini-arm", "mac", "generic-x86_64", "generic-arm64"]
+          }
+        },
+        "excludeDevices": {
+          "type": "array",
+          "description": "v2.4: device classes the template must NOT be offered on even if the architecture matches (clients filter on this).",
+          "items": {
+            "type": "string",
+            "enum": ["raspberry-pi-4", "raspberry-pi-5", "mac-mini-arm", "mac", "generic-x86_64", "generic-arm64"]
           }
         },
         "architectures": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "enum": ["linux/arm64", "linux/amd64", "linux/arm/v7"] }
+          "items": { "type": "string", "enum": ["linux/arm64", "linux/amd64", "linux/arm/v7", "darwin/arm64"] }
         },
         "os": {
           "type": "array",
@@ -189,11 +197,31 @@
     },
     "systemRuntime": {
       "type": "object",
-      "required": ["unitName", "unitTemplate"],
       "additionalProperties": false,
+      "description": "Exactly one flavor: the systemd unit (unitName + unitTemplate, Raspberry Pi) or the v2.4 macOS host-service (host_service).",
+      "anyOf": [
+        { "required": ["unitName", "unitTemplate"] },
+        { "required": ["host_service"] }
+      ],
       "properties": {
         "unitName": { "type": "string", "pattern": "\\.service$" },
         "unitTemplate": { "type": "string" },
+        "host_service": {
+          "type": "object",
+          "description": "v2.4 (macOS host-services): a launchd-managed host binary instead of a systemd unit. The agent verifies binary_digest before extract/exec.",
+          "additionalProperties": false,
+          "required": ["binary", "binary_url", "binary_digest"],
+          "properties": {
+            "kind": { "type": "string" },
+            "binary": { "type": "string" },
+            "binary_url": { "type": "string" },
+            "binary_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "archive": { "type": "string", "enum": ["tgz"] },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "env": { "type": "object", "additionalProperties": { "type": "string" } },
+            "data_dir": { "type": "string" }
+          }
+        },
         "files": {
           "type": "array",
           "items": {

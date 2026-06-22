@@ -15,7 +15,7 @@ metadata:
   displayName: Ghost
   version: "1.0.0"
 spec:
-  minSpecVersion: "v2.1"
+  minSpecVersion: "v2.5"
   minAgentVersion: "0.3.0"
   compatibility:
     architectures: [linux/arm64]
@@ -83,7 +83,7 @@ metadata:
   displayName: whoami
   version: "1.0.0"
 spec:
-  minSpecVersion: "v2.1"
+  minSpecVersion: "v2.5"
   minAgentVersion: "0.3.0"
   compatibility:
     architectures: [linux/arm64, linux/amd64]

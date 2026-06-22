@@ -11,9 +11,12 @@
  */
 
 export const MANIFEST_V2_API_VERSION = 'obacht.dev/v2' as const;
-// NOTE: this spec-repo copy had drifted (was 'v2.2' while the registry runtime
-// was already on v2.4 for the macOS platform). Bumped to v2.5 for the additive
-// spec.gettingStarted field. The v2.3/v2.4 deltas still need back-porting here.
+// v2.4: adds the macOS platform — the `mac` device, the `darwin/arm64`
+// architecture, and the `system` runtime's host-service flavor (launchd-managed
+// host binary, e.g. Ollama). Additive over v2.3, so it stays a minor within the
+// obacht.dev/v2 envelope.
+// v2.5: adds the optional, informational spec.gettingStarted note (shown to the
+// user post-install). Additive over v2.4 — old manifests stay valid.
 export const SUPPORTED_SPEC_VERSION = 'v2.5' as const;
 
 export interface ManifestV2 {
@@ -52,9 +55,10 @@ export interface ManifestV2Spec {
   /** Env-var keys whose values are redacted in agent telemetry/audit/errors. */
   secrets?: string[];
   /**
-   * Spec v2.5: optional post-install "getting started" note shown to the user
-   * after install (e.g. "open the app and register your account"). Plain text /
-   * lightweight markdown. Purely informational — the agent never sees it.
+   * Optional post-install "getting started" note shown to the user after the
+   * service is installed (e.g. "open the app and register your first
+   * account"). Plain text / lightweight markdown. Purely informational — the
+   * agent never sees it.
    */
   gettingStarted?: string;
 }
@@ -63,13 +67,18 @@ export type DeviceModel =
   | 'raspberry-pi-4'
   | 'raspberry-pi-5'
   | 'mac-mini-arm'
+  | 'mac'
   | 'generic-x86_64'
   | 'generic-arm64';
 
-export type Architecture = 'linux/arm64' | 'linux/amd64' | 'linux/arm/v7';
+export type Architecture = 'linux/arm64' | 'linux/amd64' | 'linux/arm/v7' | 'darwin/arm64';
 
 export interface ManifestV2Compatibility {
   devices?: DeviceModel[];
+  // v2.4: device classes the template should NOT be offered on even if the
+  // architecture matches — e.g. a Pi container bundle that has a native Mac
+  // replacement (so it's hidden on `mac`). Clients filter on this.
+  excludeDevices?: DeviceModel[];
   architectures: Architecture[];
   os?: Array<{ id: string; minVersion?: string }>;
   resources?: { minRamMb?: number; minDiskMb?: number };
@@ -100,24 +109,33 @@ export interface ManifestV2Compose {
   imageDigests?: Record<string, string>;
   /** YAML compose document (string). Validated against allowlist by registry. */
   body: string;
-  /**
-   * Spec v2.3: allow image references without a pinned digest. Only used by
-   * custom-docker-composition, where the user supplies the compose body at
-   * install time so digests cannot be pinned at publish. The agent enforces
-   * the compose allowlist as defence-in-depth for these bodies.
-   */
+  /** v2.3: allow tag-only images (custom-docker-composition); agent enforces allowlist at apply. */
   allowUnpinnedImages?: boolean;
-  /**
-   * Spec v2.3: config key whose value is written verbatim as the project
-   * .env file (KEY=value lines) for ${VAR} interpolation in the body.
-   */
+  /** v2.3: config key written verbatim as the project .env file. */
   envConfigKey?: string;
 }
 
 export interface ManifestV2System {
-  unitName: string;
-  unitTemplate: string;
+  // systemd flavor (Raspberry Pi). Optional because v2.4 adds the host-service
+  // flavor below; exactly one of the two must be present.
+  unitName?: string;
+  unitTemplate?: string;
   files?: Array<{ path: string; mode?: string; content: string }>;
+  // v2.4 (macOS host-services): a launchd-managed host binary instead of a
+  // systemd unit, e.g. Ollama. Structured (binary + argv + env), never a raw
+  // plist/shell. The agent verifies binary_digest before extract/exec.
+  host_service?: ManifestV2HostService;
+}
+
+export interface ManifestV2HostService {
+  kind?: string;
+  binary: string;
+  binary_url: string;
+  binary_digest: string;
+  archive?: 'tgz';
+  args?: string[];
+  env?: Record<string, string>;
+  data_dir?: string;
 }
 
 export interface ManifestV2Service {
@@ -155,8 +173,7 @@ export interface ManifestV2ConfigField {
    * changed afterwards. The webapp disables the field in the post-install
    * Configure dialog and the api rejects install-plan submissions that try
    * to mutate it. Use for values the underlying app only honours during
-   * first-boot bootstrap (e.g. Filament/Laravel admin seeding, GHOST_URL,
-   * *_INIT_* env vars).
+   * first-boot bootstrap.
    */
   immutable?: boolean;
 }
@@ -166,11 +183,9 @@ export interface ManifestV2SecretField {
   length: number;
   charset?: 'alphanumeric' | 'alphanumeric_symbols' | 'hex' | 'base64' | 'base64_bytes';
   /**
-   * Spec v2.2: secrets are immutable by default once generated (rotating
-   * an APP_KEY would invalidate Laravel session/DB encryption, etc.).
-   * The flag is accepted for explicitness and future symmetry with
-   * configField; setting it to false is currently not honoured by the
-   * agent (no rotation path implemented).
+   * Spec v2.2: secrets are immutable by default once generated; this flag
+   * is accepted for explicit declaration. Setting it to false is currently
+   * not honoured by the agent (no rotation path).
    */
   immutable?: boolean;
 }
@@ -225,17 +240,20 @@ const ENV_KEY_RE = /^[A-Z][A-Z0-9_]*$/;
 const SECRET_KEY_RE = /^[a-z][a-z0-9_]*$/;
 const CFG_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
-// A bare ${cfg.X} placeholder (custom-docker-composition structural fields).
+// A bare ${cfg.X} placeholder, used by custom-docker-composition to drive
+// structural fields (primaryPort, service targetPort/targetService) from
+// user config resolved on the device at install time.
 const CFG_REF_RE = /^\$\{cfg\.[a-zA-Z0-9_]+\}$/;
 
 const VALID_DEVICES: DeviceModel[] = [
   'raspberry-pi-4',
   'raspberry-pi-5',
   'mac-mini-arm',
+  'mac',
   'generic-x86_64',
   'generic-arm64',
 ];
-const VALID_ARCHS: Architecture[] = ['linux/arm64', 'linux/amd64', 'linux/arm/v7'];
+const VALID_ARCHS: Architecture[] = ['linux/arm64', 'linux/amd64', 'linux/arm/v7', 'darwin/arm64'];
 
 export function validateManifestV2(input: unknown): ValidationResult {
   const errors: ValidationError[] = [];
@@ -361,6 +379,12 @@ function validateCompatibility(c: ManifestV2Compatibility | undefined, errors: V
       if (!VALID_DEVICES.includes(d)) errors.push({ path: `spec.compatibility.devices[${i}]`, message: `invalid device '${d}'` });
     });
   }
+  if (c.excludeDevices !== undefined) {
+    if (!Array.isArray(c.excludeDevices)) errors.push({ path: 'spec.compatibility.excludeDevices', message: 'must be an array' });
+    else c.excludeDevices.forEach((d, i) => {
+      if (!VALID_DEVICES.includes(d)) errors.push({ path: `spec.compatibility.excludeDevices[${i}]`, message: `invalid device '${d}'` });
+    });
+  }
   if (c.resources) {
     if (c.resources.minRamMb !== undefined && (!Number.isInteger(c.resources.minRamMb) || c.resources.minRamMb < 32)) {
       errors.push({ path: 'spec.compatibility.resources.minRamMb', message: 'must be an integer >= 32' });
@@ -394,12 +418,10 @@ function validateRuntime(rt: any, errors: ValidationError[]): void {
       return;
     }
     if (!rt.compose.primaryService) errors.push({ path: 'spec.runtime.compose.primaryService', message: 'is required' });
-    // primaryPort is normally a number; custom-docker-composition drives it
-    // from a ${cfg.X} placeholder string resolved on the device at install.
-    const pp = rt.compose.primaryPort;
-    const ppIsCfgPlaceholder = typeof pp === 'string' && /^\$\{cfg\.[a-zA-Z0-9_]+\}$/.test(pp);
-    if (!ppIsCfgPlaceholder && (typeof pp !== 'number' || pp < 1 || pp > 65535)) {
-      errors.push({ path: 'spec.runtime.compose.primaryPort', message: 'must be 1..65535 or a ${cfg.X} placeholder' });
+    {
+      const pp = rt.compose.primaryPort;
+      const ok = (typeof pp === 'number' && pp >= 1 && pp <= 65535) || (typeof pp === 'string' && CFG_REF_RE.test(pp));
+      if (!ok) errors.push({ path: 'spec.runtime.compose.primaryPort', message: 'must be 1..65535 or a ${cfg.X} placeholder' });
     }
     if (typeof rt.compose.body !== 'string' || rt.compose.body.trim().length === 0) {
       errors.push({ path: 'spec.runtime.compose.body', message: 'is required (YAML compose document as string)' });
@@ -420,8 +442,22 @@ function validateRuntime(rt: any, errors: ValidationError[]): void {
       errors.push({ path: 'spec.runtime.system', message: 'is required when type=system' });
       return;
     }
-    if (!rt.system.unitName) errors.push({ path: 'spec.runtime.system.unitName', message: 'is required' });
-    if (!rt.system.unitTemplate) errors.push({ path: 'spec.runtime.system.unitTemplate', message: 'is required' });
+    if (rt.system.host_service) {
+      // v2.4 macOS host-service flavor: structured binary + pinned digest.
+      const hs = rt.system.host_service;
+      if (!hs.binary) errors.push({ path: 'spec.runtime.system.host_service.binary', message: 'is required' });
+      if (!hs.binary_url) errors.push({ path: 'spec.runtime.system.host_service.binary_url', message: 'is required' });
+      if (!hs.binary_digest || !DIGEST_RE.test(hs.binary_digest)) {
+        errors.push({ path: 'spec.runtime.system.host_service.binary_digest', message: 'is required and must be sha256:<hex64>' });
+      }
+      if (hs.archive !== undefined && hs.archive !== 'tgz') {
+        errors.push({ path: 'spec.runtime.system.host_service.archive', message: 'must be "tgz"' });
+      }
+    } else {
+      // systemd flavor (Raspberry Pi).
+      if (!rt.system.unitName) errors.push({ path: 'spec.runtime.system.unitName', message: 'is required' });
+      if (!rt.system.unitTemplate) errors.push({ path: 'spec.runtime.system.unitTemplate', message: 'is required' });
+    }
   } else {
     errors.push({ path: 'spec.runtime.type', message: 'must be "container", "compose" or "system"' });
   }
@@ -439,7 +475,7 @@ function validateService(svc: any, path: string, errors: ValidationError[], runt
   }
   if ((svc.targetType === 'container_port' || svc.targetType === 'host_port') &&
       !(typeof svc.targetPort === 'number' || (typeof svc.targetPort === 'string' && CFG_REF_RE.test(svc.targetPort)))) {
-    errors.push({ path: `${path}.targetPort`, message: 'is required for *_port targets' });
+    errors.push({ path: `${path}.targetPort`, message: 'is required for *_port targets (number or ${cfg.X})' });
   }
   if (svc.targetType === 'unix_socket' && !svc.targetPath) {
     errors.push({ path: `${path}.targetPath`, message: 'is required for unix_socket' });

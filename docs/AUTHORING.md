@@ -1,4 +1,4 @@
-# Authoring Obacht Templates (spec v2.1)
+# Authoring Obacht Templates (spec v2.5)
 
 This document is for community template authors. The spec lives at
 `schema/manifest-v2.json`; this is the human-readable companion.
@@ -22,6 +22,20 @@ spec:
 The agent ships an embedded `SupportedSpecVersion` constant. Manifests
 asking for a higher revision are refused. v2.1 is the first version
 where `minSpecVersion` is mandatory.
+
+Revisions since v2.1 are **additive** — older agents ignore the new
+fields, so you only need to raise `minSpecVersion` if your template
+actually depends on one:
+
+- **v2.2** — `immutable` on config/secret fields (first-boot bootstrap values).
+- **v2.3** — `allowUnpinnedImages` + `envConfigKey` on compose; `${cfg.X}`
+  placeholders for compose `primaryPort` and service `targetPort`.
+- **v2.4** — macOS platform: the `mac` device, the `darwin/arm64`
+  architecture, `compatibility.excludeDevices`, and the `system` runtime's
+  `host_service` flavor (a launchd-managed host binary).
+- **v2.5** — `spec.gettingStarted`: an optional post-install note shown to
+  the user after install (e.g. "open the app and register your account").
+  Informational only; the agent never sees it.
 
 ## Choosing a runtime
 
