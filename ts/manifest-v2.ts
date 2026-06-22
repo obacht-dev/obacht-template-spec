@@ -11,7 +11,10 @@
  */
 
 export const MANIFEST_V2_API_VERSION = 'obacht.dev/v2' as const;
-export const SUPPORTED_SPEC_VERSION = 'v2.2' as const;
+// NOTE: this spec-repo copy had drifted (was 'v2.2' while the registry runtime
+// was already on v2.4 for the macOS platform). Bumped to v2.5 for the additive
+// spec.gettingStarted field. The v2.3/v2.4 deltas still need back-porting here.
+export const SUPPORTED_SPEC_VERSION = 'v2.5' as const;
 
 export interface ManifestV2 {
   apiVersion: typeof MANIFEST_V2_API_VERSION;
@@ -48,6 +51,12 @@ export interface ManifestV2Spec {
   minSudoLevel?: 'none' | 'power';
   /** Env-var keys whose values are redacted in agent telemetry/audit/errors. */
   secrets?: string[];
+  /**
+   * Spec v2.5: optional post-install "getting started" note shown to the user
+   * after install (e.g. "open the app and register your account"). Plain text /
+   * lightweight markdown. Purely informational — the agent never sees it.
+   */
+  gettingStarted?: string;
 }
 
 export type DeviceModel =

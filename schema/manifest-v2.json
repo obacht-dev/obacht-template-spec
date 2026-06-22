@@ -50,6 +50,10 @@
           "type": "array",
           "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
           "uniqueItems": true
+        },
+        "gettingStarted": {
+          "type": "string",
+          "description": "Optional post-install note shown to the user after the service is installed (plain text / lightweight markdown). Purely informational; the agent never sees it. Added in spec v2.5."
         }
       }
     },
