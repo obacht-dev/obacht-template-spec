@@ -21,7 +21,7 @@ share the exact same definition:
 ## Status
 
 `obacht.dev/v2` is **stable** as of 2026-04. Current spec revision:
-**v2.6**. v2.1 was the first revision to mandate `spec.minSpecVersion` and
+**v2.7**. v2.1 was the first revision to mandate `spec.minSpecVersion` and
 `spec.compatibility` (breaking vs v2.0); **everything since v2.1 is
 additive** — older agents simply ignore fields they don't understand, so a
 manifest only needs to raise `minSpecVersion` if it depends on the agent
@@ -36,6 +36,7 @@ Revisions since v2.1 (see [`docs/AUTHORING.md`](docs/AUTHORING.md) for detail):
 | v2.4 | macOS platform — the `mac` device, `darwin/arm64`, `excludeDevices`, and the `system` runtime's `host_service` (launchd-managed host binary) |
 | v2.5 | optional informational `spec.gettingStarted` post-install note |
 | v2.6 | typed config-field renderers `timezone`, `email`, `domain` (render-only — value stays a plain string, so the agent/api are unaffected) |
+| v2.7 | optional `advanced: true` on a config field — Easy-Mode clients hide it (install falls back to its `default`); render-only, agent/api unaffected |
 
 ## Quick reference
 
@@ -147,6 +148,10 @@ client concern — the webapp shows a better input widget (e.g. a searchable
 IANA-timezone picker), but the value resolves to the same string a `text`
 field would, so the agent and api need no change. Prefer them over a `text`
 field with an "e.g. Europe/Berlin" hint.
+
+Any field may also carry `immutable: true` (set-once at install) and, since
+v2.7, `advanced: true` (hidden from the Easy-Mode UI — the install falls back
+to the field's `default`). Both are render/policy flags; the agent ignores them.
 
 ## Layout
 

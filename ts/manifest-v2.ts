@@ -21,7 +21,10 @@ export const MANIFEST_V2_API_VERSION = 'obacht.dev/v2' as const;
 // These are render-only: clients (webapp) show a better input widget, but the
 // value still resolves to the same string a 'text' field would, so the agent and
 // api need no change. Additive over v2.5 — old manifests stay valid.
-export const SUPPORTED_SPEC_VERSION = 'v2.6' as const;
+// v2.7: adds the optional `advanced` flag on config fields. Render-only: Easy-Mode
+// clients hide flagged fields (the install falls back to the field default), the
+// agent and api ignore it. Additive over v2.6 — old manifests stay valid.
+export const SUPPORTED_SPEC_VERSION = 'v2.7' as const;
 
 export interface ManifestV2 {
   apiVersion: typeof MANIFEST_V2_API_VERSION;
@@ -184,6 +187,14 @@ export interface ManifestV2ConfigField {
    * first-boot bootstrap.
    */
   immutable?: boolean;
+  /**
+   * Spec v2.7: when true, Easy-Mode clients hide this field from the
+   * install/Configure UI; the install falls back to the field's `default`.
+   * Render-only — the agent and api ignore it. Only flag fields that have a
+   * usable default and are not required-without-default, otherwise an
+   * Easy-Mode install would be left with no value.
+   */
+  advanced?: boolean;
 }
 
 export interface ManifestV2SecretField {

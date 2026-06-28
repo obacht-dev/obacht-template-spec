@@ -41,6 +41,11 @@ actually depends on one:
   IANA-timezone picker), but the value resolves to the same string a `text`
   field would. The agent and api need no change, so you do **not** raise
   `minSpecVersion` just to use them — the registry validator is what gates them.
+- **v2.7** — optional `advanced: true` on a config field. Easy-Mode clients hide
+  the field (the install falls back to its `default`); Advanced Mode shows it.
+  Render-only (agent/api ignore it). **Only flag fields that have a usable
+  `default` and aren't required-without-default** — otherwise an Easy-Mode
+  install ends up with no value. Don't raise `minSpecVersion` for it.
 
 ## Choosing a runtime
 
