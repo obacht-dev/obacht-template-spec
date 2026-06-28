@@ -20,11 +20,22 @@ share the exact same definition:
 
 ## Status
 
-`obacht.dev/v2` is **stable** as of 2026-04. Current minor: **v2.1.0**
-(2026-05) — adds compose-runtime bundles, compatibility hints, and the
-`service_reference` config field type. v2.1 manifests are accepted by
-agents on **v0.3.x** and newer; older agents reject them with a clear
-"unsupported runtime/feature" error.
+`obacht.dev/v2` is **stable** as of 2026-04. Current spec revision:
+**v2.6**. v2.1 was the first revision to mandate `spec.minSpecVersion` and
+`spec.compatibility` (breaking vs v2.0); **everything since v2.1 is
+additive** — older agents simply ignore fields they don't understand, so a
+manifest only needs to raise `minSpecVersion` if it depends on the agent
+interpreting a newer feature (most newer features are client/registry-only).
+
+Revisions since v2.1 (see [`docs/AUTHORING.md`](docs/AUTHORING.md) for detail):
+
+| Rev  | Adds |
+|------|------|
+| v2.2 | `immutable` on config/secret fields (first-boot bootstrap values) |
+| v2.3 | tag-only compose images (`allowUnpinnedImages`), `envConfigKey`, `${cfg.X}` structural placeholders |
+| v2.4 | macOS platform — the `mac` device, `darwin/arm64`, `excludeDevices`, and the `system` runtime's `host_service` (launchd-managed host binary) |
+| v2.5 | optional informational `spec.gettingStarted` post-install note |
+| v2.6 | typed config-field renderers `timezone`, `email`, `domain` (render-only — value stays a plain string, so the agent/api are unaffected) |
 
 ## Quick reference
 
@@ -37,9 +48,11 @@ metadata:
   version: "1.0.0"                # semver
   trustLevel: official            # official | community | unverified
 spec:
-  minAgentVersion: "0.1.3"
+  minSpecVersion: "v2.1"          # mandatory since v2.1
+  compatibility:                  # mandatory since v2.1
+    architectures: ["linux/arm64", "linux/amd64"]
   runtime:
-    type: container               # or 'system' (systemd unit)
+    type: container               # or 'compose' / 'system'
     container:
       image: traefik/whoami:latest
       cmd: ["--port=80"]
@@ -124,6 +137,16 @@ compatibility:
 `configSchema[].type` gains `service_reference` — a free-text URL field
 hinting that the value should point at another service (e.g. the URL
 of an OpenWebUI bundle's Ollama backend).
+
+### Config field types
+
+`configSchema[].type` supports: `text`, `textarea`, `number`, `select`,
+`boolean`, `secret`, `service_reference` (v2.1), and the v2.6 typed
+renderers `timezone`, `email`, `domain`. The typed renderers are purely a
+client concern — the webapp shows a better input widget (e.g. a searchable
+IANA-timezone picker), but the value resolves to the same string a `text`
+field would, so the agent and api need no change. Prefer them over a `text`
+field with an "e.g. Europe/Berlin" hint.
 
 ## Layout
 
