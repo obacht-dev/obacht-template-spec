@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.obacht.dev/manifest-v2.json",
   "title": "Obacht Template Manifest v2",
-  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets (BREAKING vs v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility). Additive since: v2.2 immutable config/secret fields; v2.3 tag-only compose images + envConfigKey + ${cfg.X} structural placeholders; v2.4 macOS platform (the 'mac' device, 'darwin/arm64' architecture, compatibility.excludeDevices, and the system runtime's host_service flavor); v2.5 the optional spec.gettingStarted post-install note; v2.6 the typed config-field renderers 'timezone', 'email' and 'domain' (render-only — they resolve to the same string a 'text' field would, so the agent and api are unaffected).",
+  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets (BREAKING vs v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility). Additive since: v2.2 immutable config/secret fields; v2.3 tag-only compose images + envConfigKey + ${cfg.X} structural placeholders; v2.4 macOS platform (the 'mac' device, 'darwin/arm64' architecture, compatibility.excludeDevices, and the system runtime's host_service flavor); v2.5 the optional spec.gettingStarted post-install note; v2.6 the typed config-field renderers 'timezone', 'email' and 'domain' (render-only — they resolve to the same string a 'text' field would, so the agent and api are unaffected); v2.7 the optional 'advanced' flag on config fields (render-only — Easy-Mode clients hide flagged fields, falling back to their default).",
   "type": "object",
   "required": ["apiVersion", "kind", "metadata", "spec"],
   "additionalProperties": false,
@@ -289,7 +289,8 @@
             "default": { "type": "string" }
           }
         },
-        "immutable": { "type": "boolean", "default": false, "description": "Spec v2.2: when true, the value is set at install time and cannot be changed via the post-install Configure UI. The api rejects install-plan submissions that try to mutate it." }
+        "immutable": { "type": "boolean", "default": false, "description": "Spec v2.2: when true, the value is set at install time and cannot be changed via the post-install Configure UI. The api rejects install-plan submissions that try to mutate it." },
+        "advanced": { "type": "boolean", "default": false, "description": "Spec v2.7: when true, clients in Easy Mode hide this field from the install/Configure UI (the install still uses the field's default). Render-only — the agent and api ignore it. Only set advanced on fields that have a usable default and are not required-without-default, otherwise Easy-Mode installs break." }
       },
       "allOf": [
         { "if": { "properties": { "type": { "const": "select" } } }, "then": { "required": ["options"] } },
