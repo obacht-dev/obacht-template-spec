@@ -17,7 +17,11 @@ export const MANIFEST_V2_API_VERSION = 'obacht.dev/v2' as const;
 // obacht.dev/v2 envelope.
 // v2.5: adds the optional, informational spec.gettingStarted note (shown to the
 // user post-install). Additive over v2.4 — old manifests stay valid.
-export const SUPPORTED_SPEC_VERSION = 'v2.5' as const;
+// v2.6: adds the typed config-field renderers 'timezone', 'email' and 'domain'.
+// These are render-only: clients (webapp) show a better input widget, but the
+// value still resolves to the same string a 'text' field would, so the agent and
+// api need no change. Additive over v2.5 — old manifests stay valid.
+export const SUPPORTED_SPEC_VERSION = 'v2.6' as const;
 
 export interface ManifestV2 {
   apiVersion: typeof MANIFEST_V2_API_VERSION;
@@ -154,7 +158,11 @@ export type ManifestV2ConfigType =
   | 'select'
   | 'boolean'
   | 'secret'
-  | 'service_reference';
+  | 'service_reference'
+  // v2.6 render-only typed inputs. Value is still a plain string.
+  | 'timezone'
+  | 'email'
+  | 'domain';
 
 export interface ManifestV2ConfigField {
   key: string;
@@ -492,7 +500,7 @@ function validateConfigField(f: any, path: string, errors: ValidationError[]): v
   }
   if (!f.key || !CFG_KEY_RE.test(f.key)) errors.push({ path: `${path}.key`, message: 'is required (alphanumeric + underscore, must start with letter/underscore)' });
   if (!f.label) errors.push({ path: `${path}.label`, message: 'is required' });
-  const validTypes = ['text', 'textarea', 'number', 'select', 'boolean', 'secret', 'service_reference'];
+  const validTypes = ['text', 'textarea', 'number', 'select', 'boolean', 'secret', 'service_reference', 'timezone', 'email', 'domain'];
   if (!validTypes.includes(f.type)) {
     errors.push({ path: `${path}.type`, message: `must be one of ${validTypes.join(', ')}` });
   }
