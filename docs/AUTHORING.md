@@ -36,6 +36,11 @@ actually depends on one:
 - **v2.5** — `spec.gettingStarted`: an optional post-install note shown to
   the user after install (e.g. "open the app and register your account").
   Informational only; the agent never sees it.
+- **v2.6** — typed config-field renderers `timezone`, `email`, `domain`. These
+  are render-only: the webapp shows a better input widget (e.g. a searchable
+  IANA-timezone picker), but the value resolves to the same string a `text`
+  field would. The agent and api need no change, so you do **not** raise
+  `minSpecVersion` just to use them — the registry validator is what gates them.
 
 ## Choosing a runtime
 
@@ -127,6 +132,12 @@ Field types:
 - `secret` — masked, set-once, cannot be retrieved later
 - `service_reference` — points at another obacht template (v2.1 renders
   as a normal text input + note "auto-discovery in a future release")
+- `timezone` (v2.6) — IANA timezone; webapp renders a searchable picker.
+  Prefer this over a `text` field with an "e.g. Europe/Berlin" hint.
+- `email` (v2.6) — single email address; webapp renders an email input.
+- `domain` (v2.6) — bare hostname (no scheme/path); webapp normalises and
+  validates. Use for "the domain you attach under Hosting" fields. For a full
+  URL incl. `https://`, keep `text` for now (a `url` type is planned).
 
 ## Secrets — auto-generated, never leave the Pi
 

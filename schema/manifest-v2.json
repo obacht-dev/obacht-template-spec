@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.obacht.dev/manifest-v2.json",
   "title": "Obacht Template Manifest v2",
-  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets (BREAKING vs v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility). Additive since: v2.2 immutable config/secret fields; v2.3 tag-only compose images + envConfigKey + ${cfg.X} structural placeholders; v2.4 macOS platform (the 'mac' device, 'darwin/arm64' architecture, compatibility.excludeDevices, and the system runtime's host_service flavor); v2.5 the optional spec.gettingStarted post-install note.",
+  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets (BREAKING vs v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility). Additive since: v2.2 immutable config/secret fields; v2.3 tag-only compose images + envConfigKey + ${cfg.X} structural placeholders; v2.4 macOS platform (the 'mac' device, 'darwin/arm64' architecture, compatibility.excludeDevices, and the system runtime's host_service flavor); v2.5 the optional spec.gettingStarted post-install note; v2.6 the typed config-field renderers 'timezone', 'email' and 'domain' (render-only — they resolve to the same string a 'text' field would, so the agent and api are unaffected).",
   "type": "object",
   "required": ["apiVersion", "kind", "metadata", "spec"],
   "additionalProperties": false,
@@ -265,7 +265,7 @@
       "properties": {
         "key": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
         "label": { "type": "string", "minLength": 1 },
-        "type": { "type": "string", "enum": ["text", "textarea", "number", "select", "boolean", "secret", "service_reference"] },
+        "type": { "type": "string", "enum": ["text", "textarea", "number", "select", "boolean", "secret", "service_reference", "timezone", "email", "domain"] },
         "required": { "type": "boolean" },
         "default": {},
         "description": { "type": "string" },
