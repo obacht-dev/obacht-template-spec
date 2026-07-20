@@ -21,7 +21,7 @@ share the exact same definition:
 ## Status
 
 `obacht.dev/v2` is **stable** as of 2026-04. Current spec revision:
-**v2.7**. v2.1 was the first revision to mandate `spec.minSpecVersion` and
+**v2.8**. v2.1 was the first revision to mandate `spec.minSpecVersion` and
 `spec.compatibility` (breaking vs v2.0); **everything since v2.1 is
 additive** — older agents simply ignore fields they don't understand, so a
 manifest only needs to raise `minSpecVersion` if it depends on the agent
@@ -37,6 +37,7 @@ Revisions since v2.1 (see [`docs/AUTHORING.md`](docs/AUTHORING.md) for detail):
 | v2.5 | optional informational `spec.gettingStarted` post-install note |
 | v2.6 | typed config-field renderers `timezone`, `email`, `domain` (render-only — value stays a plain string, so the agent/api are unaffected) |
 | v2.7 | optional `advanced: true` on a config field — Easy-Mode clients hide it (install falls back to its `default`); render-only, agent/api unaffected |
+| v2.8 | Pi system-runtime flavors `managed_service` (digest-pinned host binary as agent-generated hardened systemd unit) + `kiosk` marker; `compatibility.requiresFeatures`; `configField.optionsSource` (device-inventory selects). Withdraws the never-shipped free-form `unitName`/`unitTemplate` flavor |
 
 ## Quick reference
 

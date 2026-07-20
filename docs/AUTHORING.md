@@ -1,4 +1,4 @@
-# Authoring Obacht Templates (spec v2.5)
+# Authoring Obacht Templates (spec v2.8)
 
 This document is for community template authors. The spec lives at
 `schema/manifest-v2.json`; this is the human-readable companion.
@@ -46,6 +46,14 @@ actually depends on one:
   Render-only (agent/api ignore it). **Only flag fields that have a usable
   `default` and aren't required-without-default** — otherwise an Easy-Mode
   install ends up with no value. Don't raise `minSpecVersion` for it.
+- **v2.8** — Pi system-runtime flavors + device-feature gating + inventory
+  selects (see "System templates" below). Adds
+  `system.managed_service` (digest-pinned host binary run as an agent-generated
+  hardened systemd unit), the `system.kiosk` marker,
+  `compatibility.requiresFeatures`, and `configField.optionsSource`. v2.8 also
+  **withdraws** the never-shipped free-form systemd flavor
+  (`unitName`/`unitTemplate`): system templates never author unit text — the
+  registry rejects manifests using it.
 
 ## Choosing a runtime
 
@@ -53,7 +61,43 @@ actually depends on one:
 |------------|--------------------------------------------------------------------------------------------|
 | `container`| Single all-in-one image. Pocketbase, Memos, Vaultwarden, Gitea-with-SQLite. Smallest blast radius. |
 | `compose`  | Multi-container bundle — needs a separate database, cache, queue, etc. Each bundle is fully isolated; **never share infra across bundles**. |
-| `system`   | Cannot run in Docker (kiosk, hardware-attached). Needs Power Mode unlocked on the device. |
+| `system`   | Cannot run in Docker (kiosk, hardware-attached). Needs Power Mode unlocked on the device. See "System templates" below. |
+
+## System templates (v2.8, Pi)
+
+System templates run **on the host**, outside Docker. They are the sanctioned
+escape hatch the compose allowlist points to for device/hardware access — and
+they are deliberately more constrained than they look:
+
+- **Official only.** `runtime.type: system` is rejected on the community
+  submission path; only obacht-signed templates ship it.
+- **`minSudoLevel: power` is mandatory** — the agent refuses the install while
+  Power Mode is locked, and only advertises the `runtime.system` capability
+  with Power Mode on.
+- **You never write a systemd unit.** Declare a `managed_service` (binary +
+  pinned digest + argv + env + hardware grants); the agent generates a hardened
+  unit (`DynamicUser`, `DevicePolicy=closed` + your declared `DeviceAllow`,
+  `NoNewPrivileges`, `ProtectSystem=strict`) and the root helper independently
+  re-validates it before installing. The binary name must be on the agent's
+  closed allowlist and the download host on its host allowlist — adding either
+  is an agent release, not a manifest change.
+- **`kiosk: {}`** is a marker flavor: the whole kiosk session (compositor +
+  Chromium) is agent-shipped; the template contributes `configSchema` and
+  `files` only. Pair it with `exclusivityGroup: display-output` and
+  `requiresFeatures: [desktop-chromium, wayland-compositor]`.
+- **`files[]`** write inline content to the instance-scoped paths
+  `/etc/obacht/svc/<instanceID>/` or `/var/lib/obacht/svc/<instanceID>/`
+  (kiosk: `/etc/obacht/kiosk/`) — nothing else.
+- **`requiresFeatures`** gates the template on detected device features
+  (`desktop-chromium`, `wayland-compositor`, `csi-or-usb-camera`). Enforced by
+  the api compat check, the client catalog filter and the on-device install
+  assertion.
+- **Exposure stays HTTP-only** via `spec.services` (`targetType: host_port`) →
+  device Caddy. `listen_ports` is documentation/validation, never a public port.
+- **`optionsSource`** (select fields) fills options from device-reported
+  inventory (`cameras`), e.g. picking the detected CSI/USB camera. Mutually
+  exclusive with `options`; clients block the install while the inventory is
+  empty.
 
 ## Compatibility (mandatory)
 

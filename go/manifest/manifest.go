@@ -1,5 +1,5 @@
 // Package manifest defines Go types for the obacht.dev/v2 template manifest,
-// spec revision v2.5.
+// spec revision v2.8.
 //
 // The schema is owned by https://github.com/obacht-dev/obacht-template-spec —
 // keep these types in sync with schema/manifest-v2.json and ts/manifest-v2.ts.
@@ -13,8 +13,13 @@ const (
 	// SupportedSpecVersion is the highest additive spec revision modelled here:
 	// v2.2 immutable config/secret fields; v2.3 tag-only compose images +
 	// envConfigKey; v2.4 macOS platform (mac device, darwin/arm64, excludeDevices,
-	// system host_service); v2.5 spec.gettingStarted.
-	SupportedSpecVersion = "v2.5"
+	// system host_service); v2.5 spec.gettingStarted; v2.6/v2.7 render-only
+	// config-field additions (typed renderers, advanced flag — no Go type
+	// changes); v2.8 the Pi system-runtime flavors managed_service + kiosk,
+	// compatibility.requiresFeatures and configField.optionsSource. v2.8 also
+	// withdraws the never-shipped free-form systemd flavor (unitName +
+	// unitTemplate) — decoders keep the fields only to detect and reject it.
+	SupportedSpecVersion = "v2.8"
 )
 
 // Manifest is the top-level v2 template manifest.
@@ -74,10 +79,15 @@ type Compatibility struct {
 	Devices []string `yaml:"devices,omitempty" json:"devices,omitempty"`
 	// ExcludeDevices (v2.4) names device classes the template must NOT be
 	// offered on even if the architecture matches (clients filter on this).
-	ExcludeDevices []string        `yaml:"excludeDevices,omitempty" json:"excludeDevices,omitempty"`
-	Architectures  []string        `yaml:"architectures"            json:"architectures"`
-	OS             []OSRequirement `yaml:"os,omitempty"            json:"os,omitempty"`
-	Resources      *ResourceBudget `yaml:"resources,omitempty"     json:"resources,omitempty"`
+	ExcludeDevices []string `yaml:"excludeDevices,omitempty" json:"excludeDevices,omitempty"`
+	Architectures  []string `yaml:"architectures"            json:"architectures"`
+	// RequiresFeatures (v2.8) names device features the template requires
+	// (e.g. "desktop-chromium", "wayland-compositor", "csi-or-usb-camera").
+	// The agent detects and reports features; api compat check, client filter
+	// and the on-device install assertion all enforce the subset relation.
+	RequiresFeatures []string        `yaml:"requiresFeatures,omitempty" json:"requiresFeatures,omitempty"`
+	OS               []OSRequirement `yaml:"os,omitempty"               json:"os,omitempty"`
+	Resources        *ResourceBudget `yaml:"resources,omitempty"        json:"resources,omitempty"`
 }
 
 // OSRequirement describes one acceptable host OS family.
@@ -147,9 +157,14 @@ type VolumeMount struct {
 }
 
 // System describes a host-managed workload. Exactly one flavor is present:
-// the systemd unit (UnitName + UnitTemplate, Raspberry Pi) or, since v2.4, the
-// macOS HostService (launchd-managed host binary).
+// the v2.4 macOS HostService (launchd-managed host binary), the v2.8 Linux
+// ManagedService (agent-generated hardened systemd unit), or the v2.8 Kiosk
+// marker (agent-shipped kiosk session).
 type System struct {
+	// UnitName/UnitTemplate are the WITHDRAWN pre-v2.8 free-form systemd
+	// flavor. No template ever shipped it. The fields are kept only so
+	// decoders can detect a manifest using it and reject it explicitly —
+	// system templates never author unit text.
 	UnitName     string       `yaml:"unitName,omitempty"     json:"unitName,omitempty"`
 	UnitTemplate string       `yaml:"unitTemplate,omitempty" json:"unitTemplate,omitempty"`
 	Files        []SystemFile `yaml:"files,omitempty"        json:"files,omitempty"`
@@ -157,6 +172,42 @@ type System struct {
 	// (binary + argv + env) instead of a systemd unit. The agent verifies
 	// BinaryDigest before extract/exec.
 	HostService *HostService `yaml:"host_service,omitempty" json:"host_service,omitempty"`
+	// ManagedService (v2.8) is the Raspberry Pi / Linux flavor: a digest-pinned
+	// host binary run as a hardened systemd unit the agent generates
+	// (DynamicUser, DevicePolicy=closed + declared DeviceAllow,
+	// NoNewPrivileges, ProtectSystem=strict). Requires minSudoLevel: power.
+	ManagedService *ManagedService `yaml:"managed_service,omitempty" json:"managed_service,omitempty"`
+	// Kiosk (v2.8) marks the agent-shipped kiosk session flavor. Always an
+	// empty object — all privileged behaviour lives in the agent; the template
+	// contributes configSchema + files only. Requires minSudoLevel: power.
+	Kiosk *KioskFlavor `yaml:"kiosk,omitempty" json:"kiosk,omitempty"`
+}
+
+// KioskFlavor is the empty v2.8 kiosk marker.
+type KioskFlavor struct{}
+
+// ManagedService is the v2.8 Linux flavor of the system runtime.
+type ManagedService struct {
+	Kind         string            `yaml:"kind,omitempty"    json:"kind,omitempty"`
+	Binary       string            `yaml:"binary"            json:"binary"`
+	BinaryURL    string            `yaml:"binary_url"        json:"binary_url"`
+	BinaryDigest string            `yaml:"binary_digest"     json:"binary_digest"`
+	Archive      string            `yaml:"archive,omitempty" json:"archive,omitempty"`
+	Args         []string          `yaml:"args,omitempty"    json:"args,omitempty"`
+	Env          map[string]string `yaml:"env,omitempty"     json:"env,omitempty"`
+	// Hardware declares the access the generated unit grants the workload.
+	// Closed enums (groups: video/render/input; devices: /dev/video*,
+	// /dev/media*, /dev/dri/*) — the agent maps devices to systemd DeviceAllow.
+	Hardware *ManagedServiceHardware `yaml:"hardware,omitempty" json:"hardware,omitempty"`
+	// ListenPorts documents the local ports the service binds (validation
+	// only; exposure happens exclusively via spec.services → device Caddy).
+	ListenPorts []int `yaml:"listen_ports,omitempty" json:"listen_ports,omitempty"`
+}
+
+// ManagedServiceHardware is the hardware-access grant block of ManagedService.
+type ManagedServiceHardware struct {
+	Groups  []string `yaml:"groups,omitempty"  json:"groups,omitempty"`
+	Devices []string `yaml:"devices,omitempty" json:"devices,omitempty"`
 }
 
 // HostService is the v2.4 macOS host-service flavor of the system runtime.
@@ -199,6 +250,10 @@ type ConfigField struct {
 	Default     interface{}    `yaml:"default,omitempty"     json:"default,omitempty"`
 	Description string         `yaml:"description,omitempty" json:"description,omitempty"`
 	Options     []ConfigOption `yaml:"options,omitempty"     json:"options,omitempty"`
+	// OptionsSource (v2.8, render-only, mutually exclusive with Options):
+	// select options come from device-reported inventory (e.g. detected
+	// cameras). The agent and api treat the chosen value as a plain string.
+	OptionsSource *OptionsSource `yaml:"optionsSource,omitempty" json:"optionsSource,omitempty"`
 
 	// For type=service_reference (declared but not resolved in v2.1).
 	Interface        string          `yaml:"interface,omitempty"        json:"interface,omitempty"`
@@ -214,6 +269,14 @@ type ConfigField struct {
 type ConfigOption struct {
 	Value string `yaml:"value" json:"value"`
 	Label string `yaml:"label" json:"label"`
+}
+
+// OptionsSource points a select field at device-reported inventory (v2.8).
+// Kind is always "device_inventory"; Inventory names the inventory list
+// ("cameras" in v2.8).
+type OptionsSource struct {
+	Kind      string `yaml:"kind"      json:"kind"`
+	Inventory string `yaml:"inventory" json:"inventory"`
 }
 
 // ConfigFallback is the input shown when no provider exists for a service_reference.

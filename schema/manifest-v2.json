@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.obacht.dev/manifest-v2.json",
   "title": "Obacht Template Manifest v2",
-  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets (BREAKING vs v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility). Additive since: v2.2 immutable config/secret fields; v2.3 tag-only compose images + envConfigKey + ${cfg.X} structural placeholders; v2.4 macOS platform (the 'mac' device, 'darwin/arm64' architecture, compatibility.excludeDevices, and the system runtime's host_service flavor); v2.5 the optional spec.gettingStarted post-install note; v2.6 the typed config-field renderers 'timezone', 'email' and 'domain' (render-only — they resolve to the same string a 'text' field would, so the agent and api are unaffected); v2.7 the optional 'advanced' flag on config fields (render-only — Easy-Mode clients hide flagged fields, falling back to their default).",
+  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets (BREAKING vs v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility). Additive since: v2.2 immutable config/secret fields; v2.3 tag-only compose images + envConfigKey + ${cfg.X} structural placeholders; v2.4 macOS platform (the 'mac' device, 'darwin/arm64' architecture, compatibility.excludeDevices, and the system runtime's host_service flavor); v2.5 the optional spec.gettingStarted post-install note; v2.6 the typed config-field renderers 'timezone', 'email' and 'domain' (render-only — they resolve to the same string a 'text' field would, so the agent and api are unaffected); v2.7 the optional 'advanced' flag on config fields (render-only — Easy-Mode clients hide flagged fields, falling back to their default); v2.8 the Pi system-runtime flavors managed_service (digest-pinned host binary run as an agent-generated hardened systemd unit) and kiosk (marker for the agent-shipped kiosk session), compatibility.requiresFeatures (device-feature gating, e.g. a preinstalled desktop), and configField.optionsSource (render-only: select options populated from device-reported inventory such as detected cameras). v2.8 also WITHDRAWS the never-shipped free-form systemd flavor (unitName + unitTemplate): system templates never author unit text; registry and agent reject it.",
   "type": "object",
   "required": ["apiVersion", "kind", "metadata", "spec"],
   "additionalProperties": false,
@@ -81,6 +81,12 @@
           "type": "array",
           "minItems": 1,
           "items": { "type": "string", "enum": ["linux/arm64", "linux/amd64", "linux/arm/v7", "darwin/arm64"] }
+        },
+        "requiresFeatures": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "v2.8: device features the template requires. The agent detects and reports device features; the api install-plan compat check, the client catalog filter AND the on-device install assertion all enforce requiresFeatures ⊆ reported features. Closed enum — widening it is a deliberate spec bump.",
+          "items": { "type": "string", "enum": ["desktop-chromium", "wayland-compositor", "csi-or-usb-camera"] }
         },
         "os": {
           "type": "array",
@@ -198,14 +204,13 @@
     "systemRuntime": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Exactly one flavor: the systemd unit (unitName + unitTemplate, Raspberry Pi) or the v2.4 macOS host-service (host_service).",
-      "anyOf": [
-        { "required": ["unitName", "unitTemplate"] },
-        { "required": ["host_service"] }
+      "description": "Exactly one flavor: the v2.4 macOS host-service (host_service), the v2.8 Linux managed service (managed_service), or the v2.8 kiosk marker (kiosk). The pre-v2.8 free-form systemd flavor (unitName + unitTemplate) is withdrawn — no template ever shipped it; system templates never author unit text, the agent generates hardened units from the structured declaration.",
+      "oneOf": [
+        { "required": ["host_service"] },
+        { "required": ["managed_service"] },
+        { "required": ["kiosk"] }
       ],
       "properties": {
-        "unitName": { "type": "string", "pattern": "\\.service$" },
-        "unitTemplate": { "type": "string" },
         "host_service": {
           "type": "object",
           "description": "v2.4 (macOS host-services): a launchd-managed host binary instead of a systemd unit. The agent verifies binary_digest before extract/exec.",
@@ -221,6 +226,41 @@
             "env": { "type": "object", "additionalProperties": { "type": "string" } },
             "data_dir": { "type": "string" }
           }
+        },
+        "managed_service": {
+          "type": "object",
+          "description": "v2.8 (Raspberry Pi / Linux, requires spec.minSudoLevel: power): a digest-pinned host binary run as a hardened systemd unit that the AGENT generates (DynamicUser, DevicePolicy=closed + declared DeviceAllow, NoNewPrivileges, ProtectSystem=strict); the root helper independently re-validates the unit before installing it. The agent verifies binary_digest before extract/exec; the binary name must be on the agent's closed allowlist, the url host on the agent's download-host allowlist.",
+          "additionalProperties": false,
+          "required": ["binary", "binary_url", "binary_digest"],
+          "properties": {
+            "kind": { "type": "string" },
+            "binary": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+            "binary_url": { "type": "string", "pattern": "^https://" },
+            "binary_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "archive": { "type": "string", "enum": ["tgz"] },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "env": { "type": "object", "additionalProperties": { "type": "string" } },
+            "hardware": {
+              "type": "object",
+              "description": "Hardware access the generated unit grants the workload. Closed enums — widening them is a deliberate spec bump.",
+              "additionalProperties": false,
+              "properties": {
+                "groups": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["video", "render", "input"] } },
+                "devices": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["/dev/video*", "/dev/media*", "/dev/dri/*"] } }
+              }
+            },
+            "listen_ports": {
+              "type": "array",
+              "description": "Local ports the service binds (documentation + validation only; exposure happens exclusively via spec.services → device Caddy).",
+              "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            }
+          }
+        },
+        "kiosk": {
+          "type": "object",
+          "description": "v2.8 marker flavor (requires spec.minSudoLevel: power and compatibility.requiresFeatures [desktop-chromium, wayland-compositor]): the agent-shipped kiosk session (Chromium fullscreen on the device's preinstalled desktop). All privileged behaviour lives in the agent; the template contributes configSchema + files only.",
+          "additionalProperties": false,
+          "properties": {}
         },
         "files": {
           "type": "array",
@@ -278,6 +318,16 @@
             "properties": { "value": { "type": "string" }, "label": { "type": "string" } }
           }
         },
+        "optionsSource": {
+          "type": "object",
+          "description": "v2.8 (render-only, select fields, mutually exclusive with options): populate the select options from device-reported inventory instead of a static list. Clients must block the install while the inventory is empty or the device is offline — no silent free-text fallback. The agent and api treat the chosen value as a plain string, exactly like a static select.",
+          "additionalProperties": false,
+          "required": ["kind", "inventory"],
+          "properties": {
+            "kind": { "type": "string", "const": "device_inventory" },
+            "inventory": { "type": "string", "enum": ["cameras"] }
+          }
+        },
         "interface": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
         "interfaceVersion": { "type": "string", "pattern": "^v\\d+$" },
         "fallback": {
@@ -293,7 +343,8 @@
         "advanced": { "type": "boolean", "default": false, "description": "Spec v2.7: when true, clients in Easy Mode hide this field from the install/Configure UI (the install still uses the field's default). Render-only — the agent and api ignore it. Only set advanced on fields that have a usable default and are not required-without-default, otherwise Easy-Mode installs break." }
       },
       "allOf": [
-        { "if": { "properties": { "type": { "const": "select" } } }, "then": { "required": ["options"] } },
+        { "if": { "properties": { "type": { "const": "select" } } }, "then": { "anyOf": [{ "required": ["options"] }, { "required": ["optionsSource"] }] } },
+        { "not": { "required": ["options", "optionsSource"] } },
         { "if": { "properties": { "type": { "const": "service_reference" } } }, "then": { "required": ["interface", "interfaceVersion"] } }
       ]
     },

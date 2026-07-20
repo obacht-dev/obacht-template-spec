@@ -24,7 +24,17 @@ export const MANIFEST_V2_API_VERSION = 'obacht.dev/v2' as const;
 // v2.7: adds the optional `advanced` flag on config fields. Render-only: Easy-Mode
 // clients hide flagged fields (the install falls back to the field default), the
 // agent and api ignore it. Additive over v2.6 — old manifests stay valid.
-export const SUPPORTED_SPEC_VERSION = 'v2.7' as const;
+// v2.8: adds the Pi system-runtime flavors `managed_service` (digest-pinned host
+// binary run as an agent-generated hardened systemd unit; requires
+// minSudoLevel: power) and `kiosk` (marker for the agent-shipped kiosk session),
+// `compatibility.requiresFeatures` (device-feature gating, e.g. a preinstalled
+// desktop), and `configField.optionsSource` (render-only: select options
+// populated from device-reported inventory such as detected cameras). v2.8 also
+// WITHDRAWS the never-shipped free-form systemd flavor (unitName +
+// unitTemplate): system templates never author unit text — registry publish and
+// the agent materializer both reject it. No shipped manifest is affected
+// (verified: zero users of the flavor).
+export const SUPPORTED_SPEC_VERSION = 'v2.8' as const;
 
 export interface ManifestV2 {
   apiVersion: typeof MANIFEST_V2_API_VERSION;
@@ -80,6 +90,12 @@ export type DeviceModel =
 
 export type Architecture = 'linux/arm64' | 'linux/amd64' | 'linux/arm/v7' | 'darwin/arm64';
 
+// v2.8: device features a template can require. The agent detects and reports
+// these; api install-plan compat check, client catalog filter AND the on-device
+// install assertion all enforce requiresFeatures ⊆ reported features. Closed
+// enum — widening it is a deliberate spec bump.
+export type DeviceFeature = 'desktop-chromium' | 'wayland-compositor' | 'csi-or-usb-camera';
+
 export interface ManifestV2Compatibility {
   devices?: DeviceModel[];
   // v2.4: device classes the template should NOT be offered on even if the
@@ -87,6 +103,8 @@ export interface ManifestV2Compatibility {
   // replacement (so it's hidden on `mac`). Clients filter on this.
   excludeDevices?: DeviceModel[];
   architectures: Architecture[];
+  // v2.8: see DeviceFeature.
+  requiresFeatures?: DeviceFeature[];
   os?: Array<{ id: string; minVersion?: string }>;
   resources?: { minRamMb?: number; minDiskMb?: number };
 }
@@ -123,15 +141,26 @@ export interface ManifestV2Compose {
 }
 
 export interface ManifestV2System {
-  // systemd flavor (Raspberry Pi). Optional because v2.4 adds the host-service
-  // flavor below; exactly one of the two must be present.
-  unitName?: string;
-  unitTemplate?: string;
-  files?: Array<{ path: string; mode?: string; content: string }>;
+  // Exactly one flavor must be present. The pre-v2.8 free-form systemd flavor
+  // (unitName + unitTemplate) is withdrawn — system templates never author
+  // unit text; registry publish and the agent materializer reject it.
+  //
   // v2.4 (macOS host-services): a launchd-managed host binary instead of a
   // systemd unit, e.g. Ollama. Structured (binary + argv + env), never a raw
   // plist/shell. The agent verifies binary_digest before extract/exec.
   host_service?: ManifestV2HostService;
+  // v2.8 (Raspberry Pi / Linux, requires minSudoLevel: power): a digest-pinned
+  // host binary run as a hardened systemd unit that the AGENT generates
+  // (DynamicUser, DevicePolicy=closed + declared DeviceAllow, NoNewPrivileges,
+  // ProtectSystem=strict); the root helper independently re-validates the unit
+  // before installing it.
+  managed_service?: ManifestV2ManagedService;
+  // v2.8 marker flavor (requires minSudoLevel: power and
+  // compatibility.requiresFeatures [desktop-chromium, wayland-compositor]):
+  // the agent-shipped kiosk session. All privileged behaviour lives in the
+  // agent; the template contributes configSchema + files only.
+  kiosk?: Record<string, never>;
+  files?: Array<{ path: string; mode?: string; content: string }>;
 }
 
 export interface ManifestV2HostService {
@@ -143,6 +172,32 @@ export interface ManifestV2HostService {
   args?: string[];
   env?: Record<string, string>;
   data_dir?: string;
+}
+
+// v2.8: hardware access grants for managed_service. Closed enums — widening
+// them is a deliberate spec bump.
+export type ManagedServiceGroup = 'video' | 'render' | 'input';
+export type ManagedServiceDevicePattern = '/dev/video*' | '/dev/media*' | '/dev/dri/*';
+
+export interface ManifestV2ManagedService {
+  kind?: string;
+  /** Must be on the agent's closed binary allowlist (e.g. 'mediamtx'). */
+  binary: string;
+  /** https only; host must be on the agent's download-host allowlist. */
+  binary_url: string;
+  binary_digest: string;
+  archive?: 'tgz';
+  args?: string[];
+  env?: Record<string, string>;
+  hardware?: {
+    groups?: ManagedServiceGroup[];
+    devices?: ManagedServiceDevicePattern[];
+  };
+  /**
+   * Local ports the service binds (documentation + validation only; exposure
+   * happens exclusively via spec.services → device Caddy).
+   */
+  listen_ports?: number[];
 }
 
 export interface ManifestV2Service {
@@ -175,6 +230,15 @@ export interface ManifestV2ConfigField {
   default?: unknown;
   description?: string;
   options?: Array<{ value: string; label: string }>;
+  /**
+   * Spec v2.8 (render-only, select fields, mutually exclusive with options):
+   * populate the select options from device-reported inventory instead of a
+   * static list. Clients must block the install while the inventory is empty
+   * or the device is offline — no silent free-text fallback. The agent and
+   * api treat the chosen value as a plain string, exactly like a static
+   * select.
+   */
+  optionsSource?: { kind: 'device_inventory'; inventory: 'cameras' };
   /** For type=service_reference. */
   interface?: string;
   interfaceVersion?: string;
@@ -273,6 +337,11 @@ const VALID_DEVICES: DeviceModel[] = [
   'generic-arm64',
 ];
 const VALID_ARCHS: Architecture[] = ['linux/arm64', 'linux/amd64', 'linux/arm/v7', 'darwin/arm64'];
+const VALID_FEATURES: DeviceFeature[] = ['desktop-chromium', 'wayland-compositor', 'csi-or-usb-camera'];
+const VALID_MANAGED_GROUPS: ManagedServiceGroup[] = ['video', 'render', 'input'];
+const VALID_MANAGED_DEVICES: ManagedServiceDevicePattern[] = ['/dev/video*', '/dev/media*', '/dev/dri/*'];
+const VALID_INVENTORIES = ['cameras'];
+const MANAGED_BINARY_RE = /^[a-z][a-z0-9-]*$/;
 
 export function validateManifestV2(input: unknown): ValidationResult {
   const errors: ValidationError[] = [];
@@ -404,6 +473,12 @@ function validateCompatibility(c: ManifestV2Compatibility | undefined, errors: V
       if (!VALID_DEVICES.includes(d)) errors.push({ path: `spec.compatibility.excludeDevices[${i}]`, message: `invalid device '${d}'` });
     });
   }
+  if (c.requiresFeatures !== undefined) {
+    if (!Array.isArray(c.requiresFeatures)) errors.push({ path: 'spec.compatibility.requiresFeatures', message: 'must be an array' });
+    else c.requiresFeatures.forEach((f, i) => {
+      if (!VALID_FEATURES.includes(f)) errors.push({ path: `spec.compatibility.requiresFeatures[${i}]`, message: `invalid feature '${f}'` });
+    });
+  }
   if (c.resources) {
     if (c.resources.minRamMb !== undefined && (!Number.isInteger(c.resources.minRamMb) || c.resources.minRamMb < 32)) {
       errors.push({ path: 'spec.compatibility.resources.minRamMb', message: 'must be an integer >= 32' });
@@ -461,6 +536,17 @@ function validateRuntime(rt: any, errors: ValidationError[]): void {
       errors.push({ path: 'spec.runtime.system', message: 'is required when type=system' });
       return;
     }
+    // v2.8: the free-form systemd flavor is withdrawn — reject explicitly.
+    if (rt.system.unitName !== undefined || rt.system.unitTemplate !== undefined) {
+      errors.push({
+        path: 'spec.runtime.system',
+        message: 'the free-form systemd flavor (unitName/unitTemplate) was withdrawn in v2.8 — use managed_service (the agent generates the unit)',
+      });
+    }
+    const flavors = ['host_service', 'managed_service', 'kiosk'].filter((k) => rt.system[k] !== undefined);
+    if (flavors.length !== 1) {
+      errors.push({ path: 'spec.runtime.system', message: 'exactly one flavor of host_service, managed_service or kiosk is required' });
+    }
     if (rt.system.host_service) {
       // v2.4 macOS host-service flavor: structured binary + pinned digest.
       const hs = rt.system.host_service;
@@ -472,10 +558,53 @@ function validateRuntime(rt: any, errors: ValidationError[]): void {
       if (hs.archive !== undefined && hs.archive !== 'tgz') {
         errors.push({ path: 'spec.runtime.system.host_service.archive', message: 'must be "tgz"' });
       }
-    } else {
-      // systemd flavor (Raspberry Pi).
-      if (!rt.system.unitName) errors.push({ path: 'spec.runtime.system.unitName', message: 'is required' });
-      if (!rt.system.unitTemplate) errors.push({ path: 'spec.runtime.system.unitTemplate', message: 'is required' });
+    }
+    if (rt.system.managed_service) {
+      // v2.8 Linux managed-service flavor: pinned binary + closed hardware enums.
+      const ms = rt.system.managed_service;
+      const p = 'spec.runtime.system.managed_service';
+      if (!ms.binary || !MANAGED_BINARY_RE.test(ms.binary)) {
+        errors.push({ path: `${p}.binary`, message: 'is required (lowercase kebab, e.g. "mediamtx")' });
+      }
+      if (!ms.binary_url || typeof ms.binary_url !== 'string' || !ms.binary_url.startsWith('https://')) {
+        errors.push({ path: `${p}.binary_url`, message: 'is required and must be https://' });
+      }
+      if (!ms.binary_digest || !DIGEST_RE.test(ms.binary_digest)) {
+        errors.push({ path: `${p}.binary_digest`, message: 'is required and must be sha256:<hex64>' });
+      }
+      if (ms.archive !== undefined && ms.archive !== 'tgz') {
+        errors.push({ path: `${p}.archive`, message: 'must be "tgz"' });
+      }
+      if (ms.hardware !== undefined) {
+        if (typeof ms.hardware !== 'object' || ms.hardware === null) {
+          errors.push({ path: `${p}.hardware`, message: 'must be an object' });
+        } else {
+          (ms.hardware.groups ?? []).forEach((g: string, i: number) => {
+            if (!VALID_MANAGED_GROUPS.includes(g as ManagedServiceGroup)) {
+              errors.push({ path: `${p}.hardware.groups[${i}]`, message: `invalid group '${g}' (allowed: ${VALID_MANAGED_GROUPS.join(', ')})` });
+            }
+          });
+          (ms.hardware.devices ?? []).forEach((d: string, i: number) => {
+            if (!VALID_MANAGED_DEVICES.includes(d as ManagedServiceDevicePattern)) {
+              errors.push({ path: `${p}.hardware.devices[${i}]`, message: `invalid device pattern '${d}' (allowed: ${VALID_MANAGED_DEVICES.join(', ')})` });
+            }
+          });
+        }
+      }
+      if (ms.listen_ports !== undefined) {
+        if (!Array.isArray(ms.listen_ports)) errors.push({ path: `${p}.listen_ports`, message: 'must be an array' });
+        else ms.listen_ports.forEach((lp: unknown, i: number) => {
+          if (typeof lp !== 'number' || !Number.isInteger(lp) || lp < 1 || lp > 65535) {
+            errors.push({ path: `${p}.listen_ports[${i}]`, message: 'must be 1..65535' });
+          }
+        });
+      }
+    }
+    if (rt.system.kiosk !== undefined) {
+      // v2.8 marker flavor: must be an empty object — all behaviour is agent-shipped.
+      if (typeof rt.system.kiosk !== 'object' || rt.system.kiosk === null || Object.keys(rt.system.kiosk).length !== 0) {
+        errors.push({ path: 'spec.runtime.system.kiosk', message: 'must be an empty object (marker flavor — behaviour lives in the agent)' });
+      }
     }
   } else {
     errors.push({ path: 'spec.runtime.type', message: 'must be "container", "compose" or "system"' });
@@ -515,8 +644,26 @@ function validateConfigField(f: any, path: string, errors: ValidationError[]): v
   if (!validTypes.includes(f.type)) {
     errors.push({ path: `${path}.type`, message: `must be one of ${validTypes.join(', ')}` });
   }
-  if (f.type === 'select' && (!Array.isArray(f.options) || f.options.length === 0)) {
-    errors.push({ path: `${path}.options`, message: 'is required for type=select' });
+  if (f.options !== undefined && f.optionsSource !== undefined) {
+    errors.push({ path: `${path}.optionsSource`, message: 'options and optionsSource are mutually exclusive' });
+  }
+  if (f.optionsSource !== undefined) {
+    if (typeof f.optionsSource !== 'object' || f.optionsSource === null) {
+      errors.push({ path: `${path}.optionsSource`, message: 'must be an object' });
+    } else {
+      if (f.optionsSource.kind !== 'device_inventory') {
+        errors.push({ path: `${path}.optionsSource.kind`, message: 'must be "device_inventory"' });
+      }
+      if (!VALID_INVENTORIES.includes(f.optionsSource.inventory)) {
+        errors.push({ path: `${path}.optionsSource.inventory`, message: `must be one of ${VALID_INVENTORIES.join(', ')}` });
+      }
+      if (f.type !== 'select') {
+        errors.push({ path: `${path}.optionsSource`, message: 'is only allowed on type=select fields' });
+      }
+    }
+  }
+  if (f.type === 'select' && f.optionsSource === undefined && (!Array.isArray(f.options) || f.options.length === 0)) {
+    errors.push({ path: `${path}.options`, message: 'is required for type=select (or use optionsSource)' });
   }
   if (f.type === 'service_reference') {
     if (!f.interface || !IFACE_RE.test(f.interface)) errors.push({ path: `${path}.interface`, message: 'is required for type=service_reference' });
