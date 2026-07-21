@@ -86,8 +86,13 @@ they are deliberately more constrained than they look:
   `files` only. Pair it with `exclusivityGroup: display-output` and
   `requiresFeatures: [desktop-chromium, wayland-compositor]`.
 - **`files[]`** write inline content to the instance-scoped paths
-  `/etc/obacht/svc/<instanceID>/` or `/var/lib/obacht/svc/<instanceID>/`
-  (kiosk: `/etc/obacht/kiosk/`) — nothing else.
+  `/etc/obacht/svc/<instanceID>/` or `/opt/obacht/svc/<instanceID>/`
+  (kiosk: `/etc/obacht/kiosk/`) — nothing else. **These files are
+  world-readable** (the workload runs as a transient systemd `DynamicUser`
+  that must be able to read them), so **never put a secret in a
+  `managed_service` `files[]` body** — use `secretsSchema` + env instead. A
+  control character in a substituted `${cfg.X}` value is rejected (it would
+  inject a structural line into the rendered file).
 - **`requiresFeatures`** gates the template on detected device features
   (`desktop-chromium`, `wayland-compositor`, `csi-or-usb-camera`). Enforced by
   the api compat check, the client catalog filter and the on-device install
