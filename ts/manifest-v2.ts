@@ -177,7 +177,7 @@ export interface ManifestV2HostService {
 // v2.8: hardware access grants for managed_service. Closed enums — widening
 // them is a deliberate spec bump.
 export type ManagedServiceGroup = 'video' | 'render' | 'input';
-export type ManagedServiceDevicePattern = '/dev/video*' | '/dev/media*' | '/dev/dri/*';
+export type ManagedServiceDevicePattern = '/dev/video*' | '/dev/media*' | '/dev/dri/*' | '/dev/dma_heap/*';
 
 export interface ManifestV2ManagedService {
   kind?: string;
@@ -339,7 +339,7 @@ const VALID_DEVICES: DeviceModel[] = [
 const VALID_ARCHS: Architecture[] = ['linux/arm64', 'linux/amd64', 'linux/arm/v7', 'darwin/arm64'];
 const VALID_FEATURES: DeviceFeature[] = ['desktop-chromium', 'wayland-compositor', 'csi-or-usb-camera'];
 const VALID_MANAGED_GROUPS: ManagedServiceGroup[] = ['video', 'render', 'input'];
-const VALID_MANAGED_DEVICES: ManagedServiceDevicePattern[] = ['/dev/video*', '/dev/media*', '/dev/dri/*'];
+const VALID_MANAGED_DEVICES: ManagedServiceDevicePattern[] = ['/dev/video*', '/dev/media*', '/dev/dri/*', '/dev/dma_heap/*'];
 const VALID_INVENTORIES = ['cameras'];
 const MANAGED_BINARY_RE = /^[a-z][a-z0-9-]*$/;
 

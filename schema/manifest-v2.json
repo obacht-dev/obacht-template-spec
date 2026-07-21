@@ -246,7 +246,7 @@
               "additionalProperties": false,
               "properties": {
                 "groups": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["video", "render", "input"] } },
-                "devices": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["/dev/video*", "/dev/media*", "/dev/dri/*"] } }
+                "devices": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["/dev/video*", "/dev/media*", "/dev/dri/*", "/dev/dma_heap/*"] } }
               }
             },
             "listen_ports": {

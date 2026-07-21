@@ -197,7 +197,7 @@ type ManagedService struct {
 	Env          map[string]string `yaml:"env,omitempty"     json:"env,omitempty"`
 	// Hardware declares the access the generated unit grants the workload.
 	// Closed enums (groups: video/render/input; devices: /dev/video*,
-	// /dev/media*, /dev/dri/*) — the agent maps devices to systemd DeviceAllow.
+	// /dev/media*, /dev/dri/*, /dev/dma_heap/*) — mapped to systemd DeviceAllow.
 	Hardware *ManagedServiceHardware `yaml:"hardware,omitempty" json:"hardware,omitempty"`
 	// ListenPorts documents the local ports the service binds (validation
 	// only; exposure happens exclusively via spec.services → device Caddy).
