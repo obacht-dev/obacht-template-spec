@@ -291,7 +291,12 @@
             { "type": "string", "pattern": "^\\$\\{cfg\\.[a-zA-Z0-9_]+\\}$" }
           ]
         },
-        "targetPath": { "type": "string" }
+        "targetPath": { "type": "string" },
+        "appPath": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._~/-]*$",
+          "description": "v2.8: when this service is bound at the domain root, redirect a bare '/' to this path — for apps that serve their entry page under a subpath (e.g. MediaMTX at '/cam/'). Absolute path, no scheme/host. Only the exact root is redirected; everything else proxies through. Ignored by clients/agents that predate the field."
+        }
       },
       "allOf": [
         { "if": { "properties": { "targetType": { "enum": ["container_port", "host_port"] } } }, "then": { "required": ["targetPort"] } },

@@ -239,6 +239,10 @@ type Service struct {
 	TargetService string `yaml:"targetService,omitempty" json:"targetService,omitempty"`
 	TargetPort    int    `yaml:"targetPort,omitempty"    json:"targetPort,omitempty"`
 	TargetPath    string `yaml:"targetPath,omitempty"    json:"targetPath,omitempty"`
+	// AppPath (v2.8): when this service is bound at the domain root, the agent
+	// redirects a bare "/" here (apps that serve under a subpath, e.g.
+	// MediaMTX at "/cam/"). Absolute path; additive — old agents ignore it.
+	AppPath string `yaml:"appPath,omitempty" json:"appPath,omitempty"`
 }
 
 // ConfigField is one input rendered as a form field at install time.

@@ -207,6 +207,14 @@ export interface ManifestV2Service {
   targetService?: string;
   targetPort?: number;
   targetPath?: string;
+  /**
+   * v2.8: when this service is bound at the domain root, the agent redirects a
+   * bare "/" to this path — for apps whose entry page lives under a subpath
+   * (e.g. MediaMTX at "/cam/"). Absolute path, no scheme/host. Only the exact
+   * root is redirected; everything else proxies through. Render/agent-only and
+   * additive: agents predating the field ignore it (no redirect).
+   */
+  appPath?: string;
 }
 
 export type ManifestV2ConfigType =
@@ -630,6 +638,9 @@ function validateService(svc: any, path: string, errors: ValidationError[], runt
   }
   if (runtimeType === 'compose' && (!svc.targetService || typeof svc.targetService !== 'string')) {
     errors.push({ path: `${path}.targetService`, message: 'is required when runtime.type=compose' });
+  }
+  if (svc.appPath !== undefined && !/^\/[A-Za-z0-9._~/-]*$/.test(String(svc.appPath))) {
+    errors.push({ path: `${path}.appPath`, message: 'must be an absolute path (start with /, no scheme/host)' });
   }
 }
 

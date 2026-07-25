@@ -228,6 +228,20 @@ services:
     targetPort: 80
 ```
 
+For an app that serves its entry page under a **subpath** (e.g. MediaMTX at
+`/cam/`), add `appPath` to the service. When the domain is bound at root, the
+agent redirects a bare `/` to `appPath` so visitors land on the app; every
+other path proxies through unchanged. Absolute path only. Additive — agents
+that predate the field simply skip the redirect.
+
+```yaml
+services:
+  - name: web
+    targetType: host_port
+    targetPort: 8888
+    appPath: /cam/
+```
+
 For compose: `targetService` must reference a service in the body. Only
 services listed here are reachable from the public domain — internal
 databases/caches must not appear here.
