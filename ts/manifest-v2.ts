@@ -639,8 +639,11 @@ function validateService(svc: any, path: string, errors: ValidationError[], runt
   if (runtimeType === 'compose' && (!svc.targetService || typeof svc.targetService !== 'string')) {
     errors.push({ path: `${path}.targetService`, message: 'is required when runtime.type=compose' });
   }
-  if (svc.appPath !== undefined && !/^\/[A-Za-z0-9._~/-]*$/.test(String(svc.appPath))) {
-    errors.push({ path: `${path}.appPath`, message: 'must be an absolute path (start with /, no scheme/host)' });
+  // Absolute path only. The char after the leading "/" must not be another
+  // "/": "//host" is a protocol-relative HOST reference (an open redirect when
+  // rendered into `redir / <path>`), which this field must never allow.
+  if (svc.appPath !== undefined && !/^\/(?:[A-Za-z0-9._~-][A-Za-z0-9._~/-]*)?$/.test(String(svc.appPath))) {
+    errors.push({ path: `${path}.appPath`, message: 'must be an absolute path (start with /, no scheme/host, no leading //)' });
   }
 }
 
