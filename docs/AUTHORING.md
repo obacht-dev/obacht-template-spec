@@ -271,6 +271,25 @@ Reserved interfaces: `openai_compatible`, `s3_compatible`,
 `smtp_relay`, `postgres_database`, `oidc_provider` (last one is
 reserved for Spaces — don't claim it yet).
 
+## Funding entry (mandatory in the official registry)
+
+Every template in `obacht-registry` needs an entry in
+`templates/funding.json`: which upstream project is behind it, whether that
+project can receive money (`forwarded` / `no_channel` / `commercial` /
+`declined` / `obacht`), and the payout channels. CI
+(`validate-templates`) fails without one.
+
+This drives the payment category: the per-template fee only applies where
+the project has a payout channel ("no payout channel, no fee") —
+`price_tier` in the catalog is derived from this status by
+`scripts/sync-template-funding.js`, never edited by hand. The category is
+a bucket, not an amount; billing maps it to amount + currency per
+plan/region.
+
+Verify channels against the project's `.github/FUNDING.yml` **and** the
+GitHub Sponsors listing (FUNDING.yml entries can point at dead listings)
+before adding them.
+
 ## Update strategy
 
 Every published manifest must bump `metadata.version` (semver). The
