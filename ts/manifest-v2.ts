@@ -34,7 +34,15 @@ export const MANIFEST_V2_API_VERSION = 'obacht.dev/v2' as const;
 // unitTemplate): system templates never author unit text — registry publish and
 // the agent materializer both reject it. No shipped manifest is affected
 // (verified: zero users of the flavor).
-export const SUPPORTED_SPEC_VERSION = 'v2.8' as const;
+// v2.9: adds `configField.optionRequirements` (per-select-option minimum
+// resources, so one template can offer e.g. a DE / DACH / EU data region and
+// clients + api + agent gate each option against the device's RAM and free
+// disk) and the render-only `spec.hosting` block (`recommendBasicAuth`: a hint
+// that the Hosting step should pre-enable per-domain Basic Auth for this
+// template; Basic Auth itself stays a domain property, never part of the
+// template). Both are additive; optionRequirements values must be >= the
+// template-wide compatibility.resources floor.
+export const SUPPORTED_SPEC_VERSION = 'v2.9' as const;
 
 export interface ManifestV2 {
   apiVersion: typeof MANIFEST_V2_API_VERSION;
@@ -78,6 +86,33 @@ export interface ManifestV2Spec {
    * agent never sees it.
    */
   gettingStarted?: string;
+  /**
+   * Spec v2.9 (render-only): hints for the Hosting step. Basic Auth is a
+   * property of the attached domain (agent `ingress.basic-auth`), never of
+   * the template — this block only tells clients what to suggest. The agent
+   * and api ignore it.
+   */
+  hosting?: ManifestV2Hosting;
+}
+
+export interface ManifestV2Hosting {
+  /**
+   * When true, clients that attach a domain to an instance of this template
+   * (e.g. the Easy-Mode wizard) pre-enable per-domain Basic Auth and show
+   * `basicAuthReason`. Advanced flows may show the hint but must not force it.
+   */
+  recommendBasicAuth?: boolean;
+  /** Short, user-facing reason shown next to the pre-enabled toggle. */
+  basicAuthReason?: string;
+}
+
+/**
+ * Spec v2.9: minimum resources one select option needs on top of the
+ * template-wide `compatibility.resources`. Values must be >= that floor.
+ */
+export interface ManifestV2OptionRequirements {
+  minRamMb?: number;
+  minDiskMb?: number;
 }
 
 export type DeviceModel =
@@ -247,6 +282,19 @@ export interface ManifestV2ConfigField {
    * select.
    */
   optionsSource?: { kind: 'device_inventory'; inventory: 'cameras' };
+  /**
+   * Spec v2.9 (select fields with static `options` only): per-option minimum
+   * resources, keyed by option value. Lets one template offer e.g. a data
+   * region (DE / DACH / EU) whose RAM and disk needs differ by an order of
+   * magnitude. Clients grey out options the device can't satisfy (RAM from
+   * the agent identity, free disk from live telemetry), the api rejects an
+   * install whose chosen option the device fails, and the agent's disk
+   * preflight uses the chosen option's `minDiskMb` instead of its fixed
+   * floor. Every key must be one of `options[].value`; every value must be
+   * >= `compatibility.resources`. Options without an entry inherit the
+   * template-wide floor.
+   */
+  optionRequirements?: Record<string, ManifestV2OptionRequirements>;
   /** For type=service_reference. */
   interface?: string;
   interfaceVersion?: string;
@@ -404,7 +452,30 @@ function validateSpec(sp: ManifestV2Spec | undefined, errors: ValidationError[])
 
   if (sp.configSchema !== undefined) {
     if (!Array.isArray(sp.configSchema)) errors.push({ path: 'spec.configSchema', message: 'must be an array' });
-    else sp.configSchema.forEach((f, i) => validateConfigField(f, `spec.configSchema[${i}]`, errors));
+    else sp.configSchema.forEach((f, i) => validateConfigField(f, `spec.configSchema[${i}]`, errors, sp.compatibility?.resources));
+  }
+
+  // v2.9: render-only hosting hints.
+  if (sp.hosting !== undefined) {
+    if (typeof sp.hosting !== 'object' || sp.hosting === null || Array.isArray(sp.hosting)) {
+      errors.push({ path: 'spec.hosting', message: 'must be an object' });
+    } else {
+      const h = sp.hosting as Record<string, unknown>;
+      for (const k of Object.keys(h)) {
+        if (k !== 'recommendBasicAuth' && k !== 'basicAuthReason') {
+          errors.push({ path: `spec.hosting.${k}`, message: 'unknown key' });
+        }
+      }
+      if (h.recommendBasicAuth !== undefined && typeof h.recommendBasicAuth !== 'boolean') {
+        errors.push({ path: 'spec.hosting.recommendBasicAuth', message: 'must be a boolean' });
+      }
+      if (h.basicAuthReason !== undefined && (typeof h.basicAuthReason !== 'string' || h.basicAuthReason.length > 300)) {
+        errors.push({ path: 'spec.hosting.basicAuthReason', message: 'must be a string of at most 300 characters' });
+      }
+      if (h.basicAuthReason !== undefined && h.recommendBasicAuth !== true) {
+        errors.push({ path: 'spec.hosting.basicAuthReason', message: 'requires recommendBasicAuth: true' });
+      }
+    }
   }
 
   if (sp.secretsSchema !== undefined) {
@@ -647,10 +718,47 @@ function validateService(svc: any, path: string, errors: ValidationError[], runt
   }
 }
 
-function validateConfigField(f: any, path: string, errors: ValidationError[]): void {
+function validateConfigField(
+  f: any,
+  path: string,
+  errors: ValidationError[],
+  floor?: { minRamMb?: number; minDiskMb?: number },
+): void {
   if (!f || typeof f !== 'object') {
     errors.push({ path, message: 'must be an object' });
     return;
+  }
+  // v2.9: per-option resource requirements.
+  if (f.optionRequirements !== undefined) {
+    const p = `${path}.optionRequirements`;
+    if (typeof f.optionRequirements !== 'object' || f.optionRequirements === null || Array.isArray(f.optionRequirements)) {
+      errors.push({ path: p, message: 'must be an object keyed by option value' });
+    } else if (f.type !== 'select' || !Array.isArray(f.options)) {
+      errors.push({ path: p, message: 'is only allowed on type=select fields with static options' });
+    } else {
+      const values = new Set((f.options as Array<{ value?: unknown }>).map((o) => o?.value));
+      for (const [k, v] of Object.entries(f.optionRequirements as Record<string, any>)) {
+        if (!values.has(k)) {
+          errors.push({ path: `${p}.${k}`, message: 'must match one of options[].value' });
+          continue;
+        }
+        if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+          errors.push({ path: `${p}.${k}`, message: 'must be an object' });
+          continue;
+        }
+        for (const rk of Object.keys(v)) {
+          if (rk !== 'minRamMb' && rk !== 'minDiskMb') errors.push({ path: `${p}.${k}.${rk}`, message: 'unknown key' });
+        }
+        for (const rk of ['minRamMb', 'minDiskMb'] as const) {
+          if (v[rk] === undefined) continue;
+          if (!Number.isInteger(v[rk]) || v[rk] < 32) {
+            errors.push({ path: `${p}.${k}.${rk}`, message: 'must be an integer >= 32' });
+          } else if (floor?.[rk] !== undefined && v[rk] < (floor[rk] as number)) {
+            errors.push({ path: `${p}.${k}.${rk}`, message: `must be >= compatibility.resources.${rk} (${floor[rk]})` });
+          }
+        }
+      }
+    }
   }
   if (!f.key || !CFG_KEY_RE.test(f.key)) errors.push({ path: `${path}.key`, message: 'is required (alphanumeric + underscore, must start with letter/underscore)' });
   if (!f.label) errors.push({ path: `${path}.label`, message: 'is required' });

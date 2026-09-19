@@ -1,4 +1,4 @@
-# Authoring Obacht Templates (spec v2.8)
+# Authoring Obacht Templates (spec v2.9)
 
 This document is for community template authors. The spec lives at
 `schema/manifest-v2.json`; this is the human-readable companion.
@@ -54,6 +54,64 @@ actually depends on one:
   **withdraws** the never-shipped free-form systemd flavor
   (`unitName`/`unitTemplate`): system templates never author unit text — the
   registry rejects manifests using it.
+- **v2.9** — `configField.optionRequirements` + `spec.hosting`. See "Per-option
+  resources" and "Hosting hints" below. Both additive; don't raise
+  `minSpecVersion` for them (the registry validator gates them, agents that
+  predate v2.9 simply fall back to the template-wide `minDiskMb` floor).
+
+## Per-option resources (v2.9)
+
+Some templates offer a choice whose footprint differs by an order of
+magnitude, e.g. which OpenStreetMap region to import. Declare the minimum
+per option instead of publishing one template per region:
+
+```yaml
+spec:
+  compatibility:
+    resources: { minRamMb: 8192, minDiskMb: 40000 }   # floor = smallest option
+  configSchema:
+    - key: region
+      label: Region
+      type: select
+      default: de
+      options:
+        - { value: de,   label: Germany }
+        - { value: dach, label: Germany, Austria, Switzerland }
+        - { value: eu,   label: Europe }
+      optionRequirements:
+        de:   { minRamMb: 8192,  minDiskMb: 40000 }
+        dach: { minRamMb: 8192,  minDiskMb: 50000 }
+        eu:   { minRamMb: 16384, minDiskMb: 200000 }
+```
+
+Rules: only on `type: select` with static `options`; every key must be an
+`options[].value`; every value must be ≥ `compatibility.resources`. Options
+without an entry inherit the floor. Clients grey out options the device can't
+satisfy (RAM from the agent identity, free disk from live telemetry), the api
+rejects an install whose chosen option the device fails, and the agent's disk
+preflight requires the chosen option's `minDiskMb` before pulling.
+
+Be honest about disk: count the download, the temporary files during import
+**and** the final data. A 4.5 GB PBF that becomes a 25 GB database needs
+`minDiskMb` around 40000, not 25000.
+
+## Hosting hints (v2.9, render-only)
+
+Basic Auth is a property of the domain the user attaches under Hosting
+(agent capability `ingress.basic-auth`), never of the template. A template
+can still say that its instances should normally sit behind one:
+
+```yaml
+spec:
+  hosting:
+    recommendBasicAuth: true
+    basicAuthReason: "An open geocoding API on a home connection is easy to overload."
+```
+
+Easy-Mode clients pre-enable the Basic Auth toggle when attaching a domain
+and show the reason; Advanced flows may show the hint but must not force it.
+The agent and api ignore the block. Use it for open APIs without their own
+login (geo services, model runners), not for apps with an account system.
 
 ## Choosing a runtime
 

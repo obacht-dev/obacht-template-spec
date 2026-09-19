@@ -54,6 +54,16 @@
         "gettingStarted": {
           "type": "string",
           "description": "Optional post-install note shown to the user after the service is installed (plain text / lightweight markdown). Purely informational; the agent never sees it. Added in spec v2.5."
+        },
+        "hosting": {
+          "type": "object",
+          "description": "Spec v2.9 (render-only): hints for the Hosting step. Basic Auth is a property of the attached domain (agent ingress.basic-auth), never of the template; this block only tells clients what to suggest. The agent and api ignore it.",
+          "additionalProperties": false,
+          "properties": {
+            "recommendBasicAuth": { "type": "boolean", "description": "When true, clients that attach a domain to an instance of this template (e.g. the Easy-Mode wizard) pre-enable per-domain Basic Auth and show basicAuthReason. Advanced flows may show the hint but must not force it." },
+            "basicAuthReason": { "type": "string", "maxLength": 300, "description": "Short user-facing reason shown next to the pre-enabled toggle. Requires recommendBasicAuth: true." }
+          },
+          "dependentRequired": { "basicAuthReason": ["recommendBasicAuth"] }
         }
       }
     },
@@ -333,6 +343,19 @@
             "inventory": { "type": "string", "enum": ["cameras"] }
           }
         },
+        "optionRequirements": {
+          "type": "object",
+          "description": "Spec v2.9 (select fields with static options only): per-option minimum resources keyed by options[].value. Clients grey out options the device cannot satisfy (RAM from the agent identity, free disk from live telemetry), the api rejects an install whose chosen option the device fails, and the agent's disk preflight uses the chosen option's minDiskMb instead of its fixed floor. Every value must be >= compatibility.resources; options without an entry inherit the template-wide floor.",
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "minRamMb": { "type": "integer", "minimum": 32 },
+              "minDiskMb": { "type": "integer", "minimum": 32 }
+            }
+          }
+        },
         "interface": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
         "interfaceVersion": { "type": "string", "pattern": "^v\\d+$" },
         "fallback": {
@@ -350,6 +373,7 @@
       "allOf": [
         { "if": { "properties": { "type": { "const": "select" } } }, "then": { "anyOf": [{ "required": ["options"] }, { "required": ["optionsSource"] }] } },
         { "not": { "required": ["options", "optionsSource"] } },
+        { "if": { "required": ["optionRequirements"] }, "then": { "required": ["options"], "properties": { "type": { "const": "select" } } } },
         { "if": { "properties": { "type": { "const": "service_reference" } } }, "then": { "required": ["interface", "interfaceVersion"] } }
       ]
     },

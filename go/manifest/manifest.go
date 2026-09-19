@@ -71,6 +71,20 @@ type Spec struct {
 	// GettingStarted (v2.5) is an optional post-install note shown to the user
 	// (e.g. "open the app and register your account"). Informational only.
 	GettingStarted string `yaml:"gettingStarted,omitempty" json:"gettingStarted,omitempty"`
+
+	// Hosting (v2.9, render-only) carries hints for the Hosting step. Basic
+	// Auth is a property of the attached domain, never of the template; the
+	// agent and api ignore this block.
+	Hosting *Hosting `yaml:"hosting,omitempty" json:"hosting,omitempty"`
+}
+
+// Hosting holds the v2.9 render-only Hosting-step hints.
+type Hosting struct {
+	// RecommendBasicAuth asks clients that attach a domain to an instance of
+	// this template to pre-enable per-domain Basic Auth.
+	RecommendBasicAuth bool `yaml:"recommendBasicAuth,omitempty" json:"recommendBasicAuth,omitempty"`
+	// BasicAuthReason is the short user-facing reason shown next to the toggle.
+	BasicAuthReason string `yaml:"basicAuthReason,omitempty" json:"basicAuthReason,omitempty"`
 }
 
 // Compatibility is the pre-flight contract validated by the agent before
@@ -258,6 +272,11 @@ type ConfigField struct {
 	// select options come from device-reported inventory (e.g. detected
 	// cameras). The agent and api treat the chosen value as a plain string.
 	OptionsSource *OptionsSource `yaml:"optionsSource,omitempty" json:"optionsSource,omitempty"`
+	// OptionRequirements (v2.9, select fields with static Options only) maps
+	// an option value to the minimum resources that option needs on top of
+	// Compatibility.Resources. The agent's disk preflight uses the chosen
+	// option's MinDiskMb; clients grey out options the device can't satisfy.
+	OptionRequirements map[string]ResourceBudget `yaml:"optionRequirements,omitempty" json:"optionRequirements,omitempty"`
 
 	// For type=service_reference (declared but not resolved in v2.1).
 	Interface        string          `yaml:"interface,omitempty"        json:"interface,omitempty"`
