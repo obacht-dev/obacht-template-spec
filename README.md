@@ -38,6 +38,7 @@ Revisions since v2.1 (see [`docs/AUTHORING.md`](docs/AUTHORING.md) for detail):
 | v2.6 | typed config-field renderers `timezone`, `email`, `domain` (render-only — value stays a plain string, so the agent/api are unaffected) |
 | v2.7 | optional `advanced: true` on a config field — Easy-Mode clients hide it (install falls back to its `default`); render-only, agent/api unaffected |
 | v2.8 | Pi system-runtime flavors `managed_service` (digest-pinned host binary as agent-generated hardened systemd unit) + `kiosk` marker; `compatibility.requiresFeatures`; `configField.optionsSource` (device-inventory selects). Withdraws the never-shipped free-form `unitName`/`unitTemplate` flavor |
+| v2.9 | `configField.optionRequirements` (per-select-option minimum RAM/disk); render-only `spec.hosting` hints (`recommendBasicAuth`); `services[].readiness` (`path`, `expectStatus`, `timeoutSeconds`: tunes the post-install HTTP probe behind the instance's `service_ready` state that install wizards wait on); `host_service.post_start` (loopback HTTP hooks the agent runs after a macOS host service is up, e.g. an Ollama model pull); `${host.data}` placeholder in `host_service.env` values and `args` (the instance's managed data directory) |
 
 ## Quick reference
 
@@ -84,6 +85,12 @@ The agent (or the api when materializing the install) substitutes:
 
 Substitution applies to `cmd`, `env` values, `volumes.source`, `volumes.target`,
 `labels` values, and `network`. Anywhere else the manifest is taken verbatim.
+
+Two placeholders are resolved by the agent on the device only, because the api
+cannot know the values: `${host.gateway}` (v2.4, the VM gateway IP a container
+uses to reach the macOS host) and `${host.data}` (v2.9, the managed data
+directory of a `host_service` instance; allowed in its `env` values and
+`args`). See "macOS host services" in `docs/AUTHORING.md`.
 
 ### What v2 deliberately drops vs. v1
 

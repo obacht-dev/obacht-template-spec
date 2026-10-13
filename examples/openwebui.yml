@@ -50,6 +50,14 @@ spec:
     - name: web
       targetType: container_port
       targetPort: 8080
+      # v2.9: Open WebUI runs migrations and a model pull before it serves
+      # pages, so "container running" is minutes ahead of "app answers".
+      # The agent probes /health until it answers; the install wizard holds
+      # its ready screen until then.
+      readiness:
+        path: /health
+        expectStatus: [200]
+        timeoutSeconds: 600
 
   configSchema:
     - key: llm_endpoint

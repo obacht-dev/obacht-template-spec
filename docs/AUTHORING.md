@@ -58,6 +58,16 @@ actually depends on one:
   resources" and "Hosting hints" below. Both additive; don't raise
   `minSpecVersion` for them (the registry validator gates them, agents that
   predate v2.9 simply fall back to the template-wide `minDiskMb` floor).
+  v2.9 also adds `services[].readiness` (tunes the post-install HTTP probe
+  behind the instance's `service_ready` state), `host_service.post_start`
+  (loopback HTTP hooks the agent runs after a macOS host service is up) and
+  the `${host.data}` placeholder for host services. See "Readiness" and
+  "macOS host services" below. Older agents ignore the two blocks and never
+  resolve the placeholder, so a template whose install depends on them (an
+  Ollama pull via `post_start`, a data directory via `${host.data}`) sets
+  `minSpecVersion: "v2.9"`. A template that only tunes `readiness` can stay
+  on its current revision; old agents simply keep reporting the generic
+  install state.
 
 ## Per-option resources (v2.9)
 
@@ -161,6 +171,83 @@ they are deliberately more constrained than they look:
   inventory (`cameras`), e.g. picking the detected CSI/USB camera. Mutually
   exclusive with `options`; clients block the install while the inventory is
   empty.
+
+## macOS host services (v2.4) and post-start hooks (v2.9)
+
+On a Mac the agent runs containers inside a VM, and some workloads need
+the host instead (Ollama wants Metal and the machine's whole RAM). The
+`host_service` flavor of the `system` runtime describes such a workload as
+a structured launchd job: a pinned, checksum-verified binary plus argv and
+env. You never write a plist. Host services are Mac-only; pair them with
+`compatibility.devices: [mac]` and `architectures: [darwin/arm64]`.
+
+```yaml
+spec:
+  runtime:
+    type: system
+    system:
+      host_service:
+        kind: ollama
+        binary: ollama
+        archive: tgz
+        binary_url: https://github.com/ollama/ollama/releases/download/v0.40.0/ollama-darwin.tgz
+        binary_digest: sha256:b490b4925a95c5f3dfcd889e566cf3dcd727848d59057fb00b03f1d6630326dc
+        args: [serve]
+        env:
+          OLLAMA_HOST: "0.0.0.0:11434"
+          OLLAMA_MODELS: "${host.data}/models"
+        post_start:
+          - http:
+              method: POST
+              url: http://127.0.0.1:11434/api/pull
+              body: '{"name": "${cfg.model}", "stream": false}'
+              timeoutSeconds: 3600
+```
+
+### Host placeholders
+
+Besides `${cfg.X}` and `${instance.id}`, two placeholders are resolved by
+the agent on the device at apply time, because only the device knows the
+values. The api leaves them untouched when it materializes the install.
+
+- `${host.gateway}` (v2.4): the IP of the VM's gateway, which is how a
+  container inside the VM reaches a service on the Mac host. Used on the
+  container side, e.g. `OLLAMA_BASE_URL: "http://${host.gateway}:11434"` in
+  the Open WebUI template that talks to a host Ollama.
+- `${host.data}` (v2.9): the managed data directory of this host-service
+  instance. The agent creates it before the service starts (on macOS
+  `~/Library/Application Support/obacht/host/data/<launchd label>`) and
+  removes it with the instance. Allowed in `host_service.env` values and in
+  `host_service.args`. Use it for everything the service writes, so an
+  uninstall leaves nothing behind in the user's home directory. Without it
+  Ollama keeps models in `~/.ollama`, where the next install finds stale
+  leftovers.
+
+### Post-start hooks
+
+`post_start` lists HTTP requests the agent sends once the service is up.
+Each entry has exactly one key, `http`, with `method` (`GET` or `POST`),
+`url`, and optionally `body`, `contentType` (default `application/json`) and
+`timeoutSeconds` (default 1800, allowed 10 to 7200; a model pull can take a
+while). `url` and `body` may contain `${cfg.X}` placeholders.
+
+How the agent runs them: after launchd has loaded the service, the agent
+waits (retrying for up to 120 seconds) until the first hook's URL accepts a
+TCP connection. Then it runs the hooks in order. A hook succeeds on any 2xx
+response. While hooks run the instance reports `service_ready: starting`;
+when all succeeded it reports `ready`; if one still fails after the agent's
+retries it reports `unhealthy`. The install wizard waits for `ready` before
+it shows the app as usable.
+
+Two rules:
+
+- **Loopback only.** `url` must match
+  `^http://(127\.0\.0\.1|localhost)(:[0-9]+)?/`. The agent refuses anything
+  else, so a hook can only talk to the service it just started.
+- **Idempotent.** Hooks run on every start and restart of the service, not
+  just on install. Ollama's `/api/pull` of a model that is already present
+  only verifies it, which is the kind of request that belongs here. A request
+  that creates something new on each call does not.
 
 ## Compatibility (mandatory)
 
@@ -304,6 +391,54 @@ For compose: `targetService` must reference a service in the body. Only
 services listed here are reachable from the public domain — internal
 databases/caches must not appear here.
 
+While the upstream behind a bound domain does not answer yet (the container
+is still running migrations, the host service is still pulling a model),
+Caddy on the device serves a small "still starting" page that refreshes
+itself every few seconds instead of a bare 502. This is agent behaviour and
+needs no manifest field. Combine it with `readiness` below so the install
+wizard also knows when the app is up.
+
+## Readiness (v2.9)
+
+"Installed" means the container or host service is running. Many apps need
+more time than that before they answer: Open WebUI runs migrations and
+pulls a model first, Nextcloud initialises its database. After the agent
+reports an instance as installed it therefore probes the service with HTTP
+GET requests, through the device's Caddy when a domain is bound and
+directly otherwise, and reports the result as `service_ready`:
+
+- `starting` until the first accepted response
+- `ready` from the first accepted response on
+- `unhealthy` after `timeoutSeconds` without one (the instance stays
+  installed; the wizard tells the user the app is still starting)
+
+Clients hold the install wizard's ready screen until `service_ready` is
+`ready`. For `container` and `compose` runtimes the agent probes `/` with
+the defaults even when the manifest says nothing. The `readiness` block on
+a service entry only tunes that probe:
+
+```yaml
+services:
+  - name: web
+    targetType: container_port
+    targetPort: 8080
+    readiness:
+      path: /health            # default "/"
+      expectStatus: [200]      # default: any 200 to 399, plus 401 and 403
+      timeoutSeconds: 600      # default 300, allowed 10 to 1800
+```
+
+- `path` must start with `/`, must not start with `//` and must not contain
+  `://`.
+- `expectStatus` lists the status codes that count as ready, each 100 to
+  599. The default accepts 401 and 403 on purpose: an auth wall still means
+  the app answers. Set it explicitly when the app's login page returns 200
+  long before the app itself works, or when it only has a dedicated health
+  endpoint.
+- Raise `timeoutSeconds` for apps whose first start is slow. The probe
+  stops at the timeout, so a value that is too low turns a healthy but slow
+  install into `unhealthy`.
+
 ## Interfaces (`provides` / `consumes`) — declared, not enforced
 
 Use this to mark services that participate in cross-bundle wiring. In
@@ -364,4 +499,5 @@ registry rejects republishes of the same `name@version`.
 - [`examples/etherpad.yml`](../examples/etherpad.yml) — single container with embedded DB
 - [`examples/wordpress-mysql.yml`](../examples/wordpress-mysql.yml) — compose bundle (web + DB) with secrets
 - [`examples/llm-stack.yml`](../examples/llm-stack.yml) — compose bundle providing the `openai_compatible` interface
-- [`examples/openwebui.yml`](../examples/openwebui.yml) — single container consuming `openai_compatible`
+- [`examples/openwebui.yml`](../examples/openwebui.yml): single container consuming `openai_compatible`, with a `readiness` probe on `/health`
+- [`examples/ollama-host.yml`](../examples/ollama-host.yml): macOS host service with `${host.data}` and a `post_start` model pull

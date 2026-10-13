@@ -1,0 +1,86 @@
+apiVersion: obacht.dev/v2
+kind: Template
+
+metadata:
+  name: ollama-host
+  displayName: Ollama (Mac, host service)
+  description: |
+    Local LLM runner for obacht Macs. Ollama runs directly on the macOS host
+    (full Metal acceleration and the machine's whole RAM) as a user
+    LaunchAgent that obacht manages. The model chosen at install time is
+    pulled right after the service starts, so the instance only reports
+    ready once the model is on disk.
+  version: "1.2.0"
+  author: obacht
+  license: MIT
+  homepage: https://ollama.com/
+  icon: brain
+  tags:
+    - ai
+    - llm
+    - mac
+  trustLevel: official
+
+spec:
+  minSpecVersion: "v2.9"
+
+  compatibility:
+    devices: [mac]
+    architectures: [darwin/arm64]
+    resources:
+      minRamMb: 8192
+      minDiskMb: 8192
+
+  runtime:
+    type: system
+    system:
+      host_service:
+        kind: ollama
+        binary: ollama
+        archive: tgz
+        binary_url: https://github.com/ollama/ollama/releases/download/v0.40.0/ollama-darwin.tgz
+        binary_digest: sha256:b490b4925a95c5f3dfcd889e566cf3dcd727848d59057fb00b03f1d6630326dc
+        args:
+          - serve
+        env:
+          # Bind so the obacht VM container (Open WebUI) can reach Ollama via
+          # the VM's host gateway (${host.gateway} on the container side).
+          OLLAMA_HOST: "0.0.0.0:11434"
+          # v2.9: ${host.data} is the instance's managed data directory. The
+          # agent creates it before the service starts and removes it with the
+          # instance, so models no longer pile up in ~/.ollama.
+          OLLAMA_MODELS: "${host.data}/models"
+          OLLAMA_CONTEXT_LENGTH: "16384"
+        # v2.9: runs after launchd loaded the service and the port accepts
+        # connections. Pulling a model that is already present only verifies
+        # it, so the hook is safe to run on every restart.
+        post_start:
+          - http:
+              method: POST
+              url: http://127.0.0.1:11434/api/pull
+              body: '{"name": "${cfg.model}", "stream": false}'
+              timeoutSeconds: 3600
+
+  configSchema:
+    - key: model
+      label: Model
+      type: select
+      default: gemma3:4b
+      options:
+        - { value: "gemma3:4b", label: "Gemma 3 4B (about 3.3 GB)" }
+        - { value: "llama3.2:3b", label: "Llama 3.2 3B (about 2 GB)" }
+        - { value: "qwen3:8b", label: "Qwen 3 8B (about 5 GB)" }
+      optionRequirements:
+        "qwen3:8b": { minRamMb: 16384, minDiskMb: 12288 }
+      description: Pulled on first start. Switch or add models later inside Open WebUI.
+
+  provides:
+    - interface: openai_compatible
+      version: v1
+      service: ollama
+      port: 11434
+      path: /v1
+
+  gettingStarted: |
+    Install "Open WebUI (Mac)" next and point it at this Ollama. The first
+    start takes a few minutes while the model downloads.

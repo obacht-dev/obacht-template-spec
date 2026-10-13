@@ -1,12 +1,21 @@
 // Package manifest defines Go types for the obacht.dev/v2 template manifest,
-// spec revision v2.8.
+// spec revision v2.9.
 //
 // The schema is owned by https://github.com/obacht-dev/obacht-template-spec —
 // keep these types in sync with schema/manifest-v2.json and ts/manifest-v2.ts.
 // The agent uses these types to deserialise manifests fetched from the
 // registry; for full structural validation, validate against the JSON Schema
-// in schema/manifest-v2.json instead of writing a hand-rolled validator.
+// in schema/manifest-v2.json instead of writing a hand-rolled validator. The
+// small Validate helpers on Readiness and PostStartHook exist because the
+// agent must enforce those contracts at apply time regardless of what the
+// registry checked.
 package manifest
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
 
 const (
 	APIVersionV2 = "obacht.dev/v2"
@@ -19,8 +28,43 @@ const (
 	// compatibility.requiresFeatures and configField.optionsSource. v2.8 also
 	// withdraws the never-shipped free-form systemd flavor (unitName +
 	// unitTemplate) — decoders keep the fields only to detect and reject it.
-	SupportedSpecVersion = "v2.8"
+	// v2.9 configField.optionRequirements, the render-only spec.hosting hints,
+	// services[].readiness (post-install HTTP readiness probe), the macOS
+	// host_service.post_start hooks and the ${host.data} placeholder.
+	SupportedSpecVersion = "v2.9"
 )
+
+// Host placeholders are resolved by the agent at apply time from facts only
+// the device knows. They survive api-side materialisation (see the agent's
+// BuildInstanceConfig), so a validator that rejects unresolved placeholders
+// must let every name in HostPlaceholders through.
+const (
+	// HostPlaceholderGateway (v2.4) is the VZ gateway IP a VM container uses
+	// to reach the macOS host, e.g. "http://${host.gateway}:11434".
+	HostPlaceholderGateway = "${host.gateway}"
+	// HostPlaceholderData (v2.9) is the instance's managed data directory for
+	// a host service, created by the agent before the service starts (on
+	// macOS ~/Library/Application Support/obacht/host/data/<launchd label>).
+	// Allowed in host_service.env values and host_service.args.
+	HostPlaceholderData = "${host.data}"
+)
+
+// HostPlaceholders lists every ${host.*} placeholder the agent resolves.
+var HostPlaceholders = []string{HostPlaceholderGateway, HostPlaceholderData}
+
+// IsHostPlaceholder reports whether name (with or without the ${...} wrapper,
+// e.g. "host.data" or "${host.data}") is a known host placeholder.
+func IsHostPlaceholder(name string) bool {
+	if !strings.HasPrefix(name, "${") {
+		name = "${" + name + "}"
+	}
+	for _, p := range HostPlaceholders {
+		if p == name {
+			return true
+		}
+	}
+	return false
+}
 
 // Manifest is the top-level v2 template manifest.
 type Manifest struct {
@@ -225,6 +269,10 @@ type ManagedServiceHardware struct {
 }
 
 // HostService is the v2.4 macOS host-service flavor of the system runtime.
+//
+// Args and Env values may contain ${cfg.X}, ${host.gateway} and (v2.9)
+// ${host.data}; the agent resolves the ${host.*} ones at apply time, see
+// HostPlaceholders.
 type HostService struct {
 	Kind         string            `yaml:"kind,omitempty"      json:"kind,omitempty"`
 	Binary       string            `yaml:"binary"              json:"binary"`
@@ -234,6 +282,84 @@ type HostService struct {
 	Args         []string          `yaml:"args,omitempty"      json:"args,omitempty"`
 	Env          map[string]string `yaml:"env,omitempty"       json:"env,omitempty"`
 	DataDir      string            `yaml:"data_dir,omitempty"  json:"data_dir,omitempty"`
+	// PostStart (v2.9) lists HTTP hooks the agent runs after launchd has
+	// loaded the service. The agent waits (retrying up to 120 s) until the
+	// first hook's URL accepts a TCP connection, then runs the hooks in order;
+	// a hook succeeds on a 2xx response. service_ready is "starting" while
+	// hooks run, "ready" when all succeeded, "unhealthy" if one fails after
+	// the agent's retries. Hooks run on every (re)start of the service, so
+	// they must be idempotent.
+	PostStart []PostStartHook `yaml:"post_start,omitempty" json:"post_start,omitempty"`
+}
+
+// PostStartHook is one entry of HostService.PostStart. Exactly one key is
+// allowed today: HTTP.
+type PostStartHook struct {
+	HTTP *PostStartHTTP `yaml:"http,omitempty" json:"http,omitempty"`
+}
+
+// PostStartHTTP is a loopback HTTP request the agent sends after the host
+// service is up. URL and Body may contain ${cfg.X} placeholders.
+type PostStartHTTP struct {
+	// Method is "GET" or "POST".
+	Method string `yaml:"method" json:"method"`
+	// URL must match PostStartURLPattern (loopback only); the agent refuses
+	// anything else.
+	URL  string `yaml:"url"            json:"url"`
+	Body string `yaml:"body,omitempty" json:"body,omitempty"`
+	// ContentType defaults to DefaultPostStartContentType.
+	ContentType string `yaml:"contentType,omitempty" json:"contentType,omitempty"`
+	// TimeoutSeconds is the per-hook response timeout; 0 means
+	// DefaultPostStartTimeoutSeconds. Allowed range 10..7200.
+	TimeoutSeconds int `yaml:"timeoutSeconds,omitempty" json:"timeoutSeconds,omitempty"`
+}
+
+const (
+	DefaultPostStartContentType    = "application/json"
+	DefaultPostStartTimeoutSeconds = 1800
+	MinPostStartTimeoutSeconds     = 10
+	MaxPostStartTimeoutSeconds     = 7200
+	// PostStartURLPattern is the loopback-only URL shape post_start hooks
+	// must use. Kept as a string so other validators can embed it.
+	PostStartURLPattern = `^http://(127\.0\.0\.1|localhost)(:[0-9]+)?/`
+)
+
+var postStartURLRe = regexp.MustCompile(PostStartURLPattern)
+
+// Validate checks the structural contract of one post_start hook: exactly the
+// http key, a GET or POST method, a loopback URL and a timeout inside the
+// allowed range. Placeholders in URL and Body are left alone.
+func (h PostStartHook) Validate() error {
+	if h.HTTP == nil {
+		return fmt.Errorf("post_start hook: http is required")
+	}
+	r := h.HTTP
+	if r.Method != "GET" && r.Method != "POST" {
+		return fmt.Errorf("post_start hook: method must be GET or POST, got %q", r.Method)
+	}
+	if !postStartURLRe.MatchString(r.URL) {
+		return fmt.Errorf("post_start hook: url must be a loopback http URL (http://127.0.0.1/... or http://localhost/...), got %q", r.URL)
+	}
+	if r.TimeoutSeconds != 0 && (r.TimeoutSeconds < MinPostStartTimeoutSeconds || r.TimeoutSeconds > MaxPostStartTimeoutSeconds) {
+		return fmt.Errorf("post_start hook: timeoutSeconds must be %d..%d, got %d", MinPostStartTimeoutSeconds, MaxPostStartTimeoutSeconds, r.TimeoutSeconds)
+	}
+	return nil
+}
+
+// EffectiveContentType returns ContentType or the default.
+func (r *PostStartHTTP) EffectiveContentType() string {
+	if r == nil || r.ContentType == "" {
+		return DefaultPostStartContentType
+	}
+	return r.ContentType
+}
+
+// EffectiveTimeoutSeconds returns TimeoutSeconds or the default.
+func (r *PostStartHTTP) EffectiveTimeoutSeconds() int {
+	if r == nil || r.TimeoutSeconds == 0 {
+		return DefaultPostStartTimeoutSeconds
+	}
+	return r.TimeoutSeconds
 }
 
 // SystemFile is a sidecar file written to disk before the unit starts.
@@ -257,6 +383,91 @@ type Service struct {
 	// redirects a bare "/" here (apps that serve under a subpath, e.g.
 	// MediaMTX at "/cam/"). Absolute path; additive — old agents ignore it.
 	AppPath string `yaml:"appPath,omitempty" json:"appPath,omitempty"`
+	// Readiness (v2.9) tunes the HTTP readiness probe the agent runs after it
+	// reports the instance as installed. Nil means the defaults (see
+	// Readiness): the agent still probes "/" for container and compose
+	// runtimes; the block only tunes it.
+	Readiness *Readiness `yaml:"readiness,omitempty" json:"readiness,omitempty"`
+}
+
+// Readiness describes the post-install HTTP probe of one service. The agent
+// sends GET requests to Path (through the device's Caddy when a domain is
+// bound, otherwise directly) and reports service_ready as "starting" until
+// the first accepted status, then "ready"; after TimeoutSeconds without
+// success "unhealthy". Clients hold the install wizard's ready screen until
+// the app really answers.
+type Readiness struct {
+	// Path defaults to "/". Must start with "/", must not start with "//"
+	// and must not contain "://".
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
+	// ExpectStatus lists the HTTP status codes that count as ready. Empty
+	// means the default: any 200..399 plus 401 and 403 (an auth wall still
+	// means the app answers). Each value must be 100..599.
+	ExpectStatus []int `yaml:"expectStatus,omitempty" json:"expectStatus,omitempty"`
+	// TimeoutSeconds is how long the agent keeps probing before it reports
+	// "unhealthy"; 0 means DefaultReadinessTimeoutSeconds. Allowed 10..1800.
+	TimeoutSeconds int `yaml:"timeoutSeconds,omitempty" json:"timeoutSeconds,omitempty"`
+}
+
+const (
+	DefaultReadinessPath           = "/"
+	DefaultReadinessTimeoutSeconds = 300
+	MinReadinessTimeoutSeconds     = 10
+	MaxReadinessTimeoutSeconds     = 1800
+)
+
+// Validate checks the structural contract of a readiness block. A nil
+// receiver is valid (defaults apply).
+func (r *Readiness) Validate() error {
+	if r == nil {
+		return nil
+	}
+	if r.Path != "" {
+		if !strings.HasPrefix(r.Path, "/") || strings.HasPrefix(r.Path, "//") || strings.Contains(r.Path, "://") {
+			return fmt.Errorf("readiness.path must be an absolute path without scheme or host, got %q", r.Path)
+		}
+	}
+	for i, s := range r.ExpectStatus {
+		if s < 100 || s > 599 {
+			return fmt.Errorf("readiness.expectStatus[%d] must be 100..599, got %d", i, s)
+		}
+	}
+	if r.TimeoutSeconds != 0 && (r.TimeoutSeconds < MinReadinessTimeoutSeconds || r.TimeoutSeconds > MaxReadinessTimeoutSeconds) {
+		return fmt.Errorf("readiness.timeoutSeconds must be %d..%d, got %d", MinReadinessTimeoutSeconds, MaxReadinessTimeoutSeconds, r.TimeoutSeconds)
+	}
+	return nil
+}
+
+// EffectivePath returns Path or "/". Safe on a nil receiver.
+func (r *Readiness) EffectivePath() string {
+	if r == nil || r.Path == "" {
+		return DefaultReadinessPath
+	}
+	return r.Path
+}
+
+// EffectiveTimeoutSeconds returns TimeoutSeconds or the default. Safe on a
+// nil receiver.
+func (r *Readiness) EffectiveTimeoutSeconds() int {
+	if r == nil || r.TimeoutSeconds == 0 {
+		return DefaultReadinessTimeoutSeconds
+	}
+	return r.TimeoutSeconds
+}
+
+// AcceptsStatus reports whether an HTTP status code counts as ready: the
+// listed ExpectStatus codes, or with none listed any 200..399 plus 401 and
+// 403. Safe on a nil receiver.
+func (r *Readiness) AcceptsStatus(code int) bool {
+	if r == nil || len(r.ExpectStatus) == 0 {
+		return (code >= 200 && code <= 399) || code == 401 || code == 403
+	}
+	for _, s := range r.ExpectStatus {
+		if s == code {
+			return true
+		}
+	}
+	return false
 }
 
 // ConfigField is one input rendered as a form field at install time.

@@ -42,7 +42,62 @@ export const MANIFEST_V2_API_VERSION = 'obacht.dev/v2' as const;
 // template; Basic Auth itself stays a domain property, never part of the
 // template). Both are additive; optionRequirements values must be >= the
 // template-wide compatibility.resources floor.
+// v2.9 also adds `services[].readiness` (tunes the HTTP readiness probe the
+// agent runs after install; drives the instance's `service_ready` state that
+// install wizards wait on), `host_service.post_start` (loopback HTTP hooks the
+// agent runs after launchd loaded a macOS host service, e.g. an Ollama model
+// pull) and the `${host.data}` placeholder in host_service env values and args
+// (the instance's managed data directory). Additive: older agents ignore the
+// fields and never resolve the placeholder, so a template that depends on them
+// sets minSpecVersion: "v2.9".
 export const SUPPORTED_SPEC_VERSION = 'v2.9' as const;
+
+/**
+ * Host placeholders the agent resolves at apply time from facts only the
+ * device knows. They survive api-side materialisation; a validator that
+ * rejects unresolved placeholders must let these through.
+ * - `${host.gateway}` (v2.4): the VZ gateway IP a VM container uses to reach
+ *   the macOS host.
+ * - `${host.data}` (v2.9): the instance's managed data directory for a host
+ *   service, created by the agent (macOS:
+ *   `~/Library/Application Support/obacht/host/data/<launchd label>`).
+ *   Allowed in `host_service.env` values and `host_service.args`.
+ */
+export const HOST_PLACEHOLDERS = ['${host.gateway}', '${host.data}'] as const;
+export type HostPlaceholder = (typeof HOST_PLACEHOLDERS)[number];
+
+/** Defaults of `services[].readiness` (v2.9). */
+export const READINESS_DEFAULTS = {
+  path: '/',
+  timeoutSeconds: 300,
+  minTimeoutSeconds: 10,
+  maxTimeoutSeconds: 1800,
+} as const;
+
+/**
+ * Whether an HTTP status counts as ready for a readiness block: the listed
+ * `expectStatus` codes, or with none listed any 200..399 plus 401 and 403 (an
+ * auth wall still means the app answers).
+ */
+export function readinessAcceptsStatus(readiness: ManifestV2ServiceReadiness | undefined, status: number): boolean {
+  if (!readiness?.expectStatus || readiness.expectStatus.length === 0) {
+    return (status >= 200 && status <= 399) || status === 401 || status === 403;
+  }
+  return readiness.expectStatus.includes(status);
+}
+
+/** Defaults of `host_service.post_start[].http` (v2.9). */
+export const POST_START_DEFAULTS = {
+  contentType: 'application/json',
+  timeoutSeconds: 1800,
+  minTimeoutSeconds: 10,
+  maxTimeoutSeconds: 7200,
+  /** Seconds the agent waits for the first hook's URL to accept a TCP connection. */
+  connectWaitSeconds: 120,
+} as const;
+
+/** Loopback-only URL shape of a post_start hook. The agent refuses anything else. */
+export const POST_START_URL_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:[0-9]+)?\//;
 
 export interface ManifestV2 {
   apiVersion: typeof MANIFEST_V2_API_VERSION;
@@ -204,9 +259,39 @@ export interface ManifestV2HostService {
   binary_url: string;
   binary_digest: string;
   archive?: 'tgz';
+  /** argv after the binary. May contain `${cfg.X}`, `${host.gateway}` and (v2.9) `${host.data}`. */
   args?: string[];
+  /** Environment of the launchd job. Values may contain `${cfg.X}`, `${host.gateway}` and (v2.9) `${host.data}`. */
   env?: Record<string, string>;
   data_dir?: string;
+  /**
+   * v2.9: HTTP hooks the agent runs after launchd has loaded the service.
+   * The agent waits (retrying up to 120 s) until the first hook's URL accepts
+   * a TCP connection, then runs the hooks in order; a hook succeeds on a 2xx
+   * response. The instance's `service_ready` is 'starting' while hooks run,
+   * 'ready' when all succeeded, 'unhealthy' if one fails after the agent's
+   * retries. Hooks run on every (re)start of the service, so they must be
+   * idempotent (Ollama's `/api/pull` of an existing model only verifies it).
+   */
+  post_start?: ManifestV2PostStartHook[];
+}
+
+/** One `post_start` entry. Exactly one key is allowed today: `http`. */
+export interface ManifestV2PostStartHook {
+  http: ManifestV2PostStartHTTP;
+}
+
+/** A loopback HTTP request the agent sends after the host service is up. */
+export interface ManifestV2PostStartHTTP {
+  method: 'GET' | 'POST';
+  /** Must match POST_START_URL_RE (loopback only). May contain `${cfg.X}` placeholders. */
+  url: string;
+  /** Request body. May contain `${cfg.X}` placeholders. */
+  body?: string;
+  /** Default 'application/json'. */
+  contentType?: string;
+  /** Per-hook response timeout, 10..7200, default 1800 (a model pull can take long). */
+  timeoutSeconds?: number;
 }
 
 // v2.8: hardware access grants for managed_service. Closed enums — widening
@@ -250,6 +335,29 @@ export interface ManifestV2Service {
    * additive: agents predating the field ignore it (no redirect).
    */
   appPath?: string;
+  /**
+   * v2.9: tunes the HTTP readiness probe the agent runs after it reports the
+   * instance as installed. The agent sends GET requests to `path` (through
+   * the device's Caddy when a domain is bound, otherwise directly) and
+   * reports `service_ready` as 'starting' until the first accepted status,
+   * then 'ready'; after `timeoutSeconds` without success 'unhealthy'.
+   * Clients hold the install wizard's ready screen until the app really
+   * answers. Without this block the agent still probes '/' with the defaults
+   * for container and compose runtimes; the block only tunes it.
+   */
+  readiness?: ManifestV2ServiceReadiness;
+}
+
+export interface ManifestV2ServiceReadiness {
+  /** Default '/'. Must start with '/', must not start with '//' and must not contain '://'. */
+  path?: string;
+  /**
+   * Status codes that count as ready, each 100..599. Default when absent:
+   * any 200..399 plus 401 and 403. See readinessAcceptsStatus().
+   */
+  expectStatus?: number[];
+  /** 10..1800, default 300. */
+  timeoutSeconds?: number;
 }
 
 export type ManifestV2ConfigType =
@@ -637,6 +745,16 @@ function validateRuntime(rt: any, errors: ValidationError[]): void {
       if (hs.archive !== undefined && hs.archive !== 'tgz') {
         errors.push({ path: 'spec.runtime.system.host_service.archive', message: 'must be "tgz"' });
       }
+      // v2.9: post_start hooks. Loopback URLs only; ${cfg.X} may appear in
+      // url and body, ${host.*} is resolved by the agent elsewhere (env/args).
+      if (hs.post_start !== undefined) {
+        const p = 'spec.runtime.system.host_service.post_start';
+        if (!Array.isArray(hs.post_start)) {
+          errors.push({ path: p, message: 'must be an array' });
+        } else {
+          hs.post_start.forEach((hook: any, i: number) => validatePostStartHook(hook, `${p}[${i}]`, errors));
+        }
+      }
     }
     if (rt.system.managed_service) {
       // v2.8 Linux managed-service flavor: pinned binary + closed hardware enums.
@@ -715,6 +833,74 @@ function validateService(svc: any, path: string, errors: ValidationError[], runt
   // rendered into `redir / <path>`), which this field must never allow.
   if (svc.appPath !== undefined && !/^\/(?:[A-Za-z0-9._~-][A-Za-z0-9._~/-]*)?$/.test(String(svc.appPath))) {
     errors.push({ path: `${path}.appPath`, message: 'must be an absolute path (start with /, no scheme/host, no leading //)' });
+  }
+  // v2.9: readiness probe tuning.
+  if (svc.readiness !== undefined) validateReadiness(svc.readiness, `${path}.readiness`, errors);
+}
+
+function validateReadiness(r: any, path: string, errors: ValidationError[]): void {
+  if (typeof r !== 'object' || r === null || Array.isArray(r)) {
+    errors.push({ path, message: 'must be an object' });
+    return;
+  }
+  for (const k of Object.keys(r)) {
+    if (k !== 'path' && k !== 'expectStatus' && k !== 'timeoutSeconds') errors.push({ path: `${path}.${k}`, message: 'unknown key' });
+  }
+  if (r.path !== undefined) {
+    const ok = typeof r.path === 'string' && r.path.startsWith('/') && !r.path.startsWith('//') && !r.path.includes('://');
+    if (!ok) errors.push({ path: `${path}.path`, message: 'must start with / (no leading //, no ://)' });
+  }
+  if (r.expectStatus !== undefined) {
+    if (!Array.isArray(r.expectStatus) || r.expectStatus.length === 0) {
+      errors.push({ path: `${path}.expectStatus`, message: 'must be a non-empty array of HTTP status codes' });
+    } else {
+      r.expectStatus.forEach((s: unknown, i: number) => {
+        if (!Number.isInteger(s) || (s as number) < 100 || (s as number) > 599) {
+          errors.push({ path: `${path}.expectStatus[${i}]`, message: 'must be an integer 100..599' });
+        }
+      });
+    }
+  }
+  if (r.timeoutSeconds !== undefined) {
+    const { minTimeoutSeconds: lo, maxTimeoutSeconds: hi } = READINESS_DEFAULTS;
+    if (!Number.isInteger(r.timeoutSeconds) || r.timeoutSeconds < lo || r.timeoutSeconds > hi) {
+      errors.push({ path: `${path}.timeoutSeconds`, message: `must be an integer ${lo}..${hi}` });
+    }
+  }
+}
+
+function validatePostStartHook(hook: any, path: string, errors: ValidationError[]): void {
+  if (typeof hook !== 'object' || hook === null || Array.isArray(hook)) {
+    errors.push({ path, message: 'must be an object with exactly one key: http' });
+    return;
+  }
+  const keys = Object.keys(hook);
+  if (keys.length !== 1 || keys[0] !== 'http') {
+    errors.push({ path, message: 'must have exactly one key: http' });
+    return;
+  }
+  const h = hook.http;
+  const p = `${path}.http`;
+  if (typeof h !== 'object' || h === null || Array.isArray(h)) {
+    errors.push({ path: p, message: 'must be an object' });
+    return;
+  }
+  for (const k of Object.keys(h)) {
+    if (!['method', 'url', 'body', 'contentType', 'timeoutSeconds'].includes(k)) errors.push({ path: `${p}.${k}`, message: 'unknown key' });
+  }
+  if (h.method !== 'GET' && h.method !== 'POST') errors.push({ path: `${p}.method`, message: 'must be GET or POST' });
+  if (typeof h.url !== 'string' || !POST_START_URL_RE.test(h.url)) {
+    errors.push({ path: `${p}.url`, message: 'must be a loopback http URL (http://127.0.0.1/... or http://localhost/...)' });
+  }
+  if (h.body !== undefined && typeof h.body !== 'string') errors.push({ path: `${p}.body`, message: 'must be a string' });
+  if (h.contentType !== undefined && (typeof h.contentType !== 'string' || h.contentType.length === 0)) {
+    errors.push({ path: `${p}.contentType`, message: 'must be a non-empty string' });
+  }
+  if (h.timeoutSeconds !== undefined) {
+    const { minTimeoutSeconds: lo, maxTimeoutSeconds: hi } = POST_START_DEFAULTS;
+    if (!Number.isInteger(h.timeoutSeconds) || h.timeoutSeconds < lo || h.timeoutSeconds > hi) {
+      errors.push({ path: `${p}.timeoutSeconds`, message: `must be an integer ${lo}..${hi}` });
+    }
   }
 }
 

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.obacht.dev/manifest-v2.json",
   "title": "Obacht Template Manifest v2",
-  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets (BREAKING vs v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility). Additive since: v2.2 immutable config/secret fields; v2.3 tag-only compose images + envConfigKey + ${cfg.X} structural placeholders; v2.4 macOS platform (the 'mac' device, 'darwin/arm64' architecture, compatibility.excludeDevices, and the system runtime's host_service flavor); v2.5 the optional spec.gettingStarted post-install note; v2.6 the typed config-field renderers 'timezone', 'email' and 'domain' (render-only — they resolve to the same string a 'text' field would, so the agent and api are unaffected); v2.7 the optional 'advanced' flag on config fields (render-only — Easy-Mode clients hide flagged fields, falling back to their default); v2.8 the Pi system-runtime flavors managed_service (digest-pinned host binary run as an agent-generated hardened systemd unit) and kiosk (marker for the agent-shipped kiosk session), compatibility.requiresFeatures (device-feature gating, e.g. a preinstalled desktop), and configField.optionsSource (render-only: select options populated from device-reported inventory such as detected cameras). v2.8 also WITHDRAWS the never-shipped free-form systemd flavor (unitName + unitTemplate): system templates never author unit text; registry and agent reject it.",
+  "description": "Declarative template manifest consumed by obacht-agent and obacht-registry. Spec revision v2.1 introduces compose-runtime bundles, device compatibility, declared service interfaces and per-instance secrets (BREAKING vs v2.0 — every manifest must declare spec.minSpecVersion and spec.compatibility). Additive since: v2.2 immutable config/secret fields; v2.3 tag-only compose images + envConfigKey + ${cfg.X} structural placeholders; v2.4 macOS platform (the 'mac' device, 'darwin/arm64' architecture, compatibility.excludeDevices, and the system runtime's host_service flavor); v2.5 the optional spec.gettingStarted post-install note; v2.6 the typed config-field renderers 'timezone', 'email' and 'domain' (render-only — they resolve to the same string a 'text' field would, so the agent and api are unaffected); v2.7 the optional 'advanced' flag on config fields (render-only — Easy-Mode clients hide flagged fields, falling back to their default); v2.8 the Pi system-runtime flavors managed_service (digest-pinned host binary run as an agent-generated hardened systemd unit) and kiosk (marker for the agent-shipped kiosk session), compatibility.requiresFeatures (device-feature gating, e.g. a preinstalled desktop), and configField.optionsSource (render-only: select options populated from device-reported inventory such as detected cameras). v2.8 also WITHDRAWS the never-shipped free-form systemd flavor (unitName + unitTemplate): system templates never author unit text; registry and agent reject it. v2.9 configField.optionRequirements (per-select-option minimum resources), the render-only spec.hosting hints, services[].readiness (HTTP readiness probe the agent runs after install; drives the service_ready state), host_service.post_start (loopback HTTP hooks the agent runs after launchd loaded a macOS host service) and the ${host.data} placeholder in host_service env values and args (the instance's managed data directory).",
   "type": "object",
   "required": ["apiVersion", "kind", "metadata", "spec"],
   "additionalProperties": false,
@@ -232,9 +232,32 @@
             "binary_url": { "type": "string" },
             "binary_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
             "archive": { "type": "string", "enum": ["tgz"] },
-            "args": { "type": "array", "items": { "type": "string" } },
-            "env": { "type": "object", "additionalProperties": { "type": "string" } },
-            "data_dir": { "type": "string" }
+            "args": { "type": "array", "items": { "type": "string" }, "description": "argv after the binary. May contain ${cfg.X}, ${host.gateway} and, since v2.9, ${host.data} (the instance's managed data directory, created by the agent)." },
+            "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment of the launchd job. Values may contain ${cfg.X}, ${host.gateway} and, since v2.9, ${host.data} (the instance's managed data directory, created by the agent)." },
+            "data_dir": { "type": "string" },
+            "post_start": {
+              "type": "array",
+              "description": "v2.9: HTTP hooks the agent runs after launchd has loaded the service. The agent waits (retrying up to 120 s) until the first hook's URL accepts a TCP connection, then runs the hooks in order; a hook succeeds on a 2xx response. The instance's service_ready is 'starting' while hooks run, 'ready' when all succeeded, 'unhealthy' if one fails after the agent's retries. Hooks run on every (re)start of the service, so they must be idempotent. Loopback URLs only; the agent refuses anything else.",
+              "items": {
+                "type": "object",
+                "required": ["http"],
+                "additionalProperties": false,
+                "properties": {
+                  "http": {
+                    "type": "object",
+                    "required": ["method", "url"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "method": { "type": "string", "enum": ["GET", "POST"] },
+                      "url": { "type": "string", "pattern": "^http://(127\\.0\\.0\\.1|localhost)(:[0-9]+)?/", "description": "Loopback only. May contain ${cfg.X} placeholders." },
+                      "body": { "type": "string", "description": "Request body. May contain ${cfg.X} placeholders." },
+                      "contentType": { "type": "string", "default": "application/json" },
+                      "timeoutSeconds": { "type": "integer", "minimum": 10, "maximum": 7200, "default": 1800, "description": "Per-hook response timeout. The default is long on purpose: a model pull can take a while." }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "managed_service": {
@@ -306,6 +329,34 @@
           "type": "string",
           "pattern": "^/(?:[A-Za-z0-9._~-][A-Za-z0-9._~/-]*)?$",
           "description": "v2.8: when this service is bound at the domain root, redirect a bare '/' to this path — for apps that serve their entry page under a subpath (e.g. MediaMTX at '/cam/'). Absolute path, no scheme/host. Only the exact root is redirected; everything else proxies through. Ignored by clients/agents that predate the field."
+        },
+        "readiness": {
+          "type": "object",
+          "description": "v2.9: tunes the HTTP readiness probe the agent runs after it reports the instance as installed. The agent sends GET requests to path (through the device's Caddy when a domain is bound, otherwise directly) and reports service_ready as 'starting' until the first accepted status, then 'ready'; after timeoutSeconds without success 'unhealthy'. Clients hold the install wizard's ready screen until the app really answers. Without this block the agent still probes '/' with the defaults for container and compose runtimes.",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^/(?:[^/].*)?$",
+              "not": { "pattern": "://" },
+              "default": "/",
+              "description": "Request path of the probe. Must start with '/', must not start with '//' and must not contain '://'."
+            },
+            "expectStatus": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "integer", "minimum": 100, "maximum": 599 },
+              "description": "HTTP status codes that count as ready. Default when absent: any 200-399 plus 401 and 403 (an auth wall still means the app answers)."
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 1800,
+              "default": 300,
+              "description": "How long the agent keeps probing before it reports 'unhealthy'."
+            }
+          }
         }
       },
       "allOf": [
